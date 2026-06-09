@@ -90,15 +90,15 @@ class GeoRideTripsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry):
         """Get the options flow for this handler."""
-        return GeoRideTripsOptionsFlow(config_entry)
+        return GeoRideTripsOptionsFlow()
 
 
 class GeoRideTripsOptionsFlow(config_entries.OptionsFlow):
-    """Handle options flow for GeoRide Trips."""
+    """Handle options flow for GeoRide Trips.
 
-    def __init__(self, config_entry):
-        """Initialize options flow."""
-        pass
+    Pas de __init__ : la classe de base expose self.config_entry
+    (l'assigner soi-même est déprécié depuis HA 2024.11).
+    """
 
     async def async_step_init(self, user_input=None):
         """Manage the options."""
