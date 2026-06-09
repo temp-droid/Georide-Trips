@@ -1,4 +1,5 @@
 """GeoRide Trips buttons - Refresh buttons and maintenance record buttons."""
+
 import logging
 from datetime import datetime, timezone
 
@@ -29,45 +30,56 @@ async def async_setup_entry(
     for tracker in trackers:
         tracker_id = str(tracker.get("trackerId"))
 
-        buttons.extend([
-            GeoRideRefreshTripsButton(
-                entry, tracker,
-                coordinators[tracker_id]
-            ),
-            GeoRideRefreshOdometerButton(
-                entry, tracker,
-                lifetime_coordinators[tracker_id]
-            ),
-            GeoRideConfirmerPleinButton(
-                hass, entry, tracker,
-                api=api,
-                coordinator=coordinators[tracker_id],
-            ),
-            GeoRideAppliquerAutonomieButton(
-                hass, entry, tracker,
-            ),
-            GeoRideRecordMaintenanceButton(
-                hass, entry, tracker, "chaine",
-                icon="mdi:link-variant",
-                odometer_key="real_odometer",
-                km_key="km_dernier_entretien_chaine",
-                dt_key="date_dernier_entretien_chaine",
-            ),
-            GeoRideRecordMaintenanceButton(
-                hass, entry, tracker, "vidange",
-                icon="mdi:oil",
-                odometer_key="real_odometer",
-                km_key="km_dernier_entretien_vidange",
-                dt_key="date_dernier_entretien_vidange",
-            ),
-            GeoRideRecordMaintenanceButton(
-                hass, entry, tracker, "revision",
-                icon="mdi:wrench",
-                odometer_key="real_odometer",
-                km_key="km_dernier_entretien_revision",
-                dt_key="date_dernier_entretien_revision",
-            ),
-        ])
+        buttons.extend(
+            [
+                GeoRideRefreshTripsButton(entry, tracker, coordinators[tracker_id]),
+                GeoRideRefreshOdometerButton(
+                    entry, tracker, lifetime_coordinators[tracker_id]
+                ),
+                GeoRideConfirmerPleinButton(
+                    hass,
+                    entry,
+                    tracker,
+                    api=api,
+                    coordinator=coordinators[tracker_id],
+                ),
+                GeoRideAppliquerAutonomieButton(
+                    hass,
+                    entry,
+                    tracker,
+                ),
+                GeoRideRecordMaintenanceButton(
+                    hass,
+                    entry,
+                    tracker,
+                    "chaine",
+                    icon="mdi:link-variant",
+                    odometer_key="real_odometer",
+                    km_key="km_dernier_entretien_chaine",
+                    dt_key="date_dernier_entretien_chaine",
+                ),
+                GeoRideRecordMaintenanceButton(
+                    hass,
+                    entry,
+                    tracker,
+                    "vidange",
+                    icon="mdi:oil",
+                    odometer_key="real_odometer",
+                    km_key="km_dernier_entretien_vidange",
+                    dt_key="date_dernier_entretien_vidange",
+                ),
+                GeoRideRecordMaintenanceButton(
+                    hass,
+                    entry,
+                    tracker,
+                    "revision",
+                    icon="mdi:wrench",
+                    odometer_key="real_odometer",
+                    km_key="km_dernier_entretien_revision",
+                    dt_key="date_dernier_entretien_revision",
+                ),
+            ]
+        )
 
     async_add_entities(buttons)
     _LOGGER.info("Added %d buttons for %d trackers", len(buttons), len(trackers))
@@ -141,8 +153,8 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
     """Button to record a maintenance event (chain, oil change, revision)."""
 
     LABEL = {
-        "chaine":   "Enregistrer entretien chaîne",
-        "vidange":  "Enregistrer vidange",
+        "chaine": "Enregistrer entretien chaîne",
+        "vidange": "Enregistrer vidange",
         "revision": "Enregistrer révision",
     }
 
@@ -194,14 +206,24 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
         """Résoudre les entity_id via le registry."""
         await super().async_added_to_hass()
         from .helpers import resolve_entity_id
+
         self._odometer_entity = resolve_entity_id(
-            self._hass, "sensor", self.tracker_id, self._odometer_key,
+            self._hass,
+            "sensor",
+            self.tracker_id,
+            self._odometer_key,
         )
         self._km_entity = resolve_entity_id(
-            self._hass, "number", self.tracker_id, self._km_key,
+            self._hass,
+            "number",
+            self.tracker_id,
+            self._km_key,
         )
         self._dt_entity = resolve_entity_id(
-            self._hass, "datetime", self.tracker_id, self._dt_key,
+            self._hass,
+            "datetime",
+            self.tracker_id,
+            self._dt_key,
         )
 
     async def async_press(self) -> None:
@@ -209,8 +231,11 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
         if not self._odometer_entity or not self._km_entity or not self._dt_entity:
             _LOGGER.error(
                 "Cannot record %s for %s: entity_id not resolved (odometer=%s, km=%s, dt=%s)",
-                self._maintenance_type, self.tracker_name,
-                self._odometer_entity, self._km_entity, self._dt_entity,
+                self._maintenance_type,
+                self.tracker_name,
+                self._odometer_entity,
+                self._km_entity,
+                self._dt_entity,
             )
             return
 
@@ -218,7 +243,9 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
         if odometer_state is None or odometer_state.state in ("unknown", "unavailable"):
             _LOGGER.warning(
                 "Cannot record %s for %s: odometer entity '%s' unavailable",
-                self._maintenance_type, self.tracker_name, self._odometer_entity,
+                self._maintenance_type,
+                self.tracker_name,
+                self._odometer_entity,
             )
             return
 
@@ -227,7 +254,8 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
         except ValueError:
             _LOGGER.error(
                 "Cannot parse odometer value '%s' for %s",
-                odometer_state.state, self.tracker_name,
+                odometer_state.state,
+                self.tracker_name,
             )
             return
 
@@ -235,21 +263,26 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
 
         # Mise à jour du KM
         await self._hass.services.async_call(
-            "number", "set_value",
+            "number",
+            "set_value",
             {"entity_id": self._km_entity, "value": odometer_km},
             blocking=True,
         )
 
         # Mise à jour de la date
         await self._hass.services.async_call(
-            "datetime", "set_value",
+            "datetime",
+            "set_value",
             {"entity_id": self._dt_entity, "datetime": now_str},
             blocking=True,
         )
 
         _LOGGER.info(
             "Recorded %s for %s: %.1f km on %s",
-            self._maintenance_type, self.tracker_name, odometer_km, now_str,
+            self._maintenance_type,
+            self.tracker_name,
+            odometer_km,
+            now_str,
         )
 
 
@@ -322,6 +355,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
     def _number_entity_id(self, key: str) -> str | None:
         """Résoudre l'entity_id d'un number à partir de sa clé via l'entity registry."""
         from homeassistant.helpers import entity_registry as er
+
         registry = er.async_get(self._hass)
         unique_id = f"{self.tracker_id}_{key}"
         return registry.async_get_entity_id("number", DOMAIN, unique_id)
@@ -329,6 +363,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
     def _datetime_entity_id(self, key: str) -> str | None:
         """Résoudre l'entity_id d'un datetime à partir de sa clé via l'entity registry."""
         from homeassistant.helpers import entity_registry as er
+
         registry = er.async_get(self._hass)
         unique_id = f"{self.tracker_id}_{key}"
         return registry.async_get_entity_id("datetime", DOMAIN, unique_id)
@@ -337,7 +372,11 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         """Lire la valeur d'un number par sa clé (via entity registry)."""
         entity_id = self._number_entity_id(key)
         if entity_id is None:
-            _LOGGER.warning("%s: entity_id introuvable pour la clé number '%s'", self.tracker_name, key)
+            _LOGGER.warning(
+                "%s: entity_id introuvable pour la clé number '%s'",
+                self.tracker_name,
+                key,
+            )
             return default
         return self._get_float(entity_id, default)
 
@@ -345,7 +384,11 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         """Lire la valeur d'un datetime par sa clé. Retourne None si absent ou sentinel 1970."""
         entity_id = self._datetime_entity_id(key)
         if entity_id is None:
-            _LOGGER.warning("%s: entity_id introuvable pour la clé datetime '%s'", self.tracker_name, key)
+            _LOGGER.warning(
+                "%s: entity_id introuvable pour la clé datetime '%s'",
+                self.tracker_name,
+                key,
+            )
             return None
         state = self._hass.states.get(entity_id)
         if state is None or state.state in ("unknown", "unavailable"):
@@ -366,11 +409,15 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         if entity_id is None:
             _LOGGER.error(
                 "%s: entity_id introuvable pour la clé number '%s' (unique_id=%s_%s)",
-                self.tracker_name, key, self.tracker_id, key,
+                self.tracker_name,
+                key,
+                self.tracker_id,
+                key,
             )
             return
         await self._hass.services.async_call(
-            "number", "set_value",
+            "number",
+            "set_value",
             {"entity_id": entity_id, "value": value},
             blocking=True,
         )
@@ -381,7 +428,10 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         if entity_id is None:
             _LOGGER.error(
                 "%s: entity_id introuvable pour la clé datetime '%s' (unique_id=%s_%s)",
-                self.tracker_name, key, self.tracker_id, key,
+                self.tracker_name,
+                key,
+                self.tracker_id,
+                key,
             )
             return
         if value is None:
@@ -389,7 +439,8 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         elif value.tzinfo is None:
             value = value.replace(tzinfo=timezone.utc)
         await self._hass.services.async_call(
-            "datetime", "set_value",
+            "datetime",
+            "set_value",
             {"entity_id": entity_id, "datetime": value.strftime("%Y-%m-%d %H:%M:%S")},
             blocking=True,
         )
@@ -410,7 +461,8 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
                 _LOGGER.info(
                     "%s: plein_pending_at non-null au démarrage (%s) et tracker verrouillé "
                     "— tentative de calcul différé",
-                    self.tracker_name, plein_pending.isoformat(),
+                    self.tracker_name,
+                    plein_pending.isoformat(),
                 )
                 self._hass.async_create_task(self._compute_and_record_plein())
             else:
@@ -418,7 +470,8 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
                 _LOGGER.info(
                     "%s: plein_pending_at non-null au démarrage (%s) et tracker déverrouillé "
                     "— réinscription attente verrouillage",
-                    self.tracker_name, plein_pending.isoformat(),
+                    self.tracker_name,
+                    plein_pending.isoformat(),
                 )
                 self._unregister_stop_cb = self._coordinator.on_stop_confirmed(
                     self._on_stop_confirmed_for_plein
@@ -429,10 +482,13 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
     def _is_tracker_locked(self) -> bool:
         """Vérifier si le tracker est actuellement verrouillé.
 
-        Utilise le binary_sensor via le registry, ou fallback sur le coordinator.
+        Utilise le binary_sensor via le registry (à jour en temps réel via
+        Socket.IO), ou fallback sur la propriété publique is_locked du
+        coordinator (polling 5 min).
         binary_sensor lock : off = verrouillé, on = déverrouillé.
         """
         from .helpers import resolve_entity_id
+
         lock_entity = resolve_entity_id(
             self._hass, "binary_sensor", self.tracker_id, "verrouille"
         )
@@ -441,14 +497,9 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
             if state and state.state not in ("unknown", "unavailable"):
                 return state.state == "off"  # off = locked
 
-        # Fallback : coordinator status data
-        if (
-            self._coordinator._status_coordinator
-            and self._coordinator._status_coordinator.data
-        ):
-            return bool(self._coordinator._status_coordinator.data.get("isLocked", False))
-
-        return False
+        # Fallback : état public du coordinator (StatusCoordinator attaché)
+        locked = self._coordinator.is_locked
+        return bool(locked) if locked is not None else False
 
     # ── Étape 1 : press immédiat ──────────────────────────────────────────────
 
@@ -475,14 +526,16 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         if self._is_tracker_locked():
             _LOGGER.info(
                 "%s: plein enregistré à %s — tracker déjà verrouillé, calcul immédiat",
-                self.tracker_name, now.strftime("%H:%M:%S"),
+                self.tracker_name,
+                now.strftime("%H:%M:%S"),
             )
             await self._compute_and_record_plein()
             return
 
         _LOGGER.info(
             "%s: plein enregistré à %s — attente verrouillage pour calcul précis",
-            self.tracker_name, now.strftime("%H:%M:%S"),
+            self.tracker_name,
+            now.strftime("%H:%M:%S"),
         )
 
         # S'abonner au prochain verrouillage (one-shot)
@@ -524,7 +577,9 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         )
         await self._coordinator.async_request_refresh()
 
-        odometer_entity = resolve_entity_id(self._hass, "sensor", self.tracker_id, "real_odometer")
+        odometer_entity = resolve_entity_id(
+            self._hass, "sensor", self.tracker_id, "real_odometer"
+        )
         odometer_actuel = self._get_float(odometer_entity) if odometer_entity else 0.0
 
         if plein_dt is None:
@@ -537,23 +592,33 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         if odometer_actuel <= 0:
             _LOGGER.error(
                 "%s: odometer actuel invalide (%.1f), abandon",
-                self.tracker_name, odometer_actuel,
+                self.tracker_name,
+                odometer_actuel,
             )
             await self._set_datetime("plein_pending_at", None)
             return
 
         # ── Distance parcourue APRÈS le plein (plein_pending_at → maintenant) ──
         now_dt = datetime.now(timezone.utc)
-        distance_post_plein = await self._fetch_post_plein_distance(plein_dt, now_dt, METERS_TO_KM)
+        distance_post_plein = await self._fetch_post_plein_distance(
+            plein_dt, now_dt, METERS_TO_KM
+        )
 
         odometer_au_plein = round(odometer_actuel - distance_post_plein, 2)
         _LOGGER.info(
             "%s: odometer plein = %.1f km (actuel=%.1f - post_plein=%.1f km)",
-            self.tracker_name, odometer_au_plein, odometer_actuel, distance_post_plein,
+            self.tracker_name,
+            odometer_au_plein,
+            odometer_actuel,
+            distance_post_plein,
         )
 
         if odometer_au_plein <= 0:
-            _LOGGER.error("%s: odometer au plein invalide (%.1f), abandon", self.tracker_name, odometer_au_plein)
+            _LOGGER.error(
+                "%s: odometer au plein invalide (%.1f), abandon",
+                self.tracker_name,
+                odometer_au_plein,
+            )
             await self._set_datetime("plein_pending_at", None)
             return
 
@@ -561,7 +626,8 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         if km_dernier_plein == 0:
             _LOGGER.info(
                 "%s: premier plein — snapshot odometer = %.1f km",
-                self.tracker_name, odometer_au_plein,
+                self.tracker_name,
+                odometer_au_plein,
             )
             await self._set_number("km_dernier_plein", odometer_au_plein)
             await self._set_number("nb_pleins_enregistres", 1)
@@ -573,7 +639,8 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         if distance_inter_plein <= 0:
             _LOGGER.warning(
                 "%s: distance inter-plein négative (%.1f km), abandon",
-                self.tracker_name, distance_inter_plein,
+                self.tracker_name,
+                distance_inter_plein,
             )
             await self._set_datetime("plein_pending_at", None)
             return
@@ -588,7 +655,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
 
         # ── Moyenne glissante (slots non-nuls, max HIST_SLOTS) ─────────────
         slots = [s for s in [distance_inter_plein, hist_1, hist_2] if s > 0]
-        slots = slots[:self.HIST_SLOTS]
+        slots = slots[: self.HIST_SLOTS]
         moyenne = round(sum(slots) / len(slots))
 
         nb_pleins = int(self._get_number("nb_pleins_enregistres")) + 1
@@ -601,8 +668,12 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         _LOGGER.info(
             "%s: plein confirmé — odometer=%.1f km, inter-plein=%.1f km, "
             "moyenne=%d km (%d valeur(s)), nb_pleins=%d",
-            self.tracker_name, odometer_au_plein, distance_inter_plein,
-            moyenne, len(slots), nb_pleins,
+            self.tracker_name,
+            odometer_au_plein,
+            distance_inter_plein,
+            moyenne,
+            len(slots),
+            nb_pleins,
         )
 
     async def _fetch_post_plein_distance(
@@ -630,19 +701,25 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
                 _LOGGER.warning("%s: API get_trips a retourné None", self.tracker_name)
                 return 0.0
 
-            distance_km = round(sum(t.get("distance", 0) for t in trips) / meters_to_km, 2)
+            distance_km = round(
+                sum(t.get("distance", 0) for t in trips) / meters_to_km, 2
+            )
 
             _LOGGER.info(
                 "%s: distance post-plein API = %.1f km (%d segment(s) entre %s et %s)",
-                self.tracker_name, distance_km, len(trips),
-                plein_dt.strftime("%H:%M"), now_dt.strftime("%H:%M"),
+                self.tracker_name,
+                distance_km,
+                len(trips),
+                plein_dt.strftime("%H:%M"),
+                now_dt.strftime("%H:%M"),
             )
             return distance_km
 
         except Exception as err:
             _LOGGER.error(
                 "%s: erreur fetch distance post-plein : %s",
-                self.tracker_name, err,
+                self.tracker_name,
+                err,
             )
             return 0.0
 
@@ -700,9 +777,15 @@ class GeoRideAppliquerAutonomieButton(ButtonEntity):
         """Copier autonomie_moyenne_calculee → autonomie_totale."""
         from .helpers import resolve_entity_id
 
-        entity_moyenne   = resolve_entity_id(self._hass, "number", self.tracker_id, "autonomie_moyenne_calculee")
-        entity_nb_pleins = resolve_entity_id(self._hass, "number", self.tracker_id, "nb_pleins_enregistres")
-        entity_totale    = resolve_entity_id(self._hass, "number", self.tracker_id, "autonomie_totale")
+        entity_moyenne = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "autonomie_moyenne_calculee"
+        )
+        entity_nb_pleins = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "nb_pleins_enregistres"
+        )
+        entity_totale = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "autonomie_totale"
+        )
 
         if not entity_moyenne or not entity_nb_pleins or not entity_totale:
             _LOGGER.error(
@@ -712,23 +795,28 @@ class GeoRideAppliquerAutonomieButton(ButtonEntity):
             return
 
         nb_pleins = self._get_float(entity_nb_pleins)
-        moyenne   = self._get_float(entity_moyenne)
+        moyenne = self._get_float(entity_moyenne)
 
         if nb_pleins < 2 or moyenne <= 0:
             _LOGGER.warning(
                 "%s: impossible d'appliquer l'autonomie calculée "
                 "(nb_pleins=%.0f, moyenne=%.1f km) — besoin d'au moins 2 pleins.",
-                self.tracker_name, nb_pleins, moyenne,
+                self.tracker_name,
+                nb_pleins,
+                moyenne,
             )
             return
 
         await self._hass.services.async_call(
-            "number", "set_value",
+            "number",
+            "set_value",
             {"entity_id": entity_totale, "value": moyenne},
             blocking=True,
         )
 
         _LOGGER.info(
             "%s: autonomie_totale mise à jour → %.1f km (moyenne sur %.0f pleins)",
-            self.tracker_name, moyenne, nb_pleins,
+            self.tracker_name,
+            moyenne,
+            nb_pleins,
         )

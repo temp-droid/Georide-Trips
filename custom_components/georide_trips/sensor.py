@@ -1,8 +1,13 @@
 """GeoRide Trips sensors - VERSION COMPLETE SIMPLE."""
+
 import logging
 from datetime import datetime, timedelta
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorEntity,
+    SensorDeviceClass,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfLength, UnitOfElectricPotential, EntityCategory
 from homeassistant.core import HomeAssistant, callback
@@ -17,7 +22,12 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 
-from .const import DOMAIN, DEFAULT_TRIPS_DAYS_BACK as TRIPS_DAYS_BACK, METERS_TO_KM, KNOTS_TO_KMH
+from .const import (
+    DOMAIN,
+    DEFAULT_TRIPS_DAYS_BACK as TRIPS_DAYS_BACK,
+    METERS_TO_KM,
+    KNOTS_TO_KMH,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,41 +68,47 @@ async def async_setup_entry(
         unregister_new_trip = coordinator.on_new_trip(_on_new_trip)
         entry.async_on_unload(unregister_new_trip)
 
-        odometer_sensor = GeoRideRealOdometerSensor(lifetime_coordinator, coordinator, entry, tracker, hass)
+        odometer_sensor = GeoRideRealOdometerSensor(
+            lifetime_coordinator, coordinator, entry, tracker, hass
+        )
         autonomy_sensor = GeoRideAutonomySensor(entry, tracker, hass, odometer_sensor)
 
         # Gestionnaire des snapshots minuit — remplace le trigger 'minuit' du blueprint
-        midnight_manager = GeoRideMidnightSnapshotManager(hass, entry, tracker, odometer_sensor)
+        midnight_manager = GeoRideMidnightSnapshotManager(
+            hass, entry, tracker, odometer_sensor
+        )
         midnight_manager.setup()
         entry.async_on_unload(midnight_manager.unschedule)
 
-        sensors.extend([
-            GeoRideLastTripSensor(coordinator, entry, tracker),
-            GeoRideLastTripDetailsSensor(coordinator, entry, tracker),
-            GeoRideTotalDistanceSensor(coordinator, entry, tracker),
-            GeoRideTripCountSensor(coordinator, entry, tracker),
-            GeoRideLifetimeOdometerSensor(lifetime_coordinator, entry, tracker),
-            # RealOdometer écoute les deux coordinators : lifetime (base solide)
-            # + coordinator récent (nouveaux trajets intra-journaliers)
-            odometer_sensor,
-            # Sensor autonomie restante (réactif sur odometer + entities carburant)
-            autonomy_sensor,
-            # Sensors km périodiques — calculés en Python, réactifs sur odometer + snapshot
-            GeoRideKmJournaliersSensor(entry, tracker, hass, odometer_sensor),
-            GeoRideKmHebdomadairesSensor(entry, tracker, hass, odometer_sensor),
-            GeoRideKmMensuelsSensor(entry, tracker, hass, odometer_sensor),
-            # Sensors entretien — km restants et jours restants calculés en Python
-            GeoRideKmRestantsChaineSensor(entry, tracker, hass, odometer_sensor),
-            GeoRideKmRestantsVidangeSensor(entry, tracker, hass, odometer_sensor),
-            GeoRideKmRestantsRevisionSensor(entry, tracker, hass, odometer_sensor),
-            GeoRideJoursRestantsRevisionSensor(entry, tracker, hass),
-            # Sensors alimentés par le coordinator status (données /user/trackers)
-            GeoRideTrackerStatusSensor(status_coordinator, entry, tracker),
-            GeoRideExternalBatterySensor(status_coordinator, entry, tracker),
-            GeoRideInternalBatterySensor(status_coordinator, entry, tracker),
-            # Sensor dernière alarme (alimenté par Socket.IO)
-            GeoRideLastAlarmSensor(entry, tracker),
-        ])
+        sensors.extend(
+            [
+                GeoRideLastTripSensor(coordinator, entry, tracker),
+                GeoRideLastTripDetailsSensor(coordinator, entry, tracker),
+                GeoRideTotalDistanceSensor(coordinator, entry, tracker),
+                GeoRideTripCountSensor(coordinator, entry, tracker),
+                GeoRideLifetimeOdometerSensor(lifetime_coordinator, entry, tracker),
+                # RealOdometer écoute les deux coordinators : lifetime (base solide)
+                # + coordinator récent (nouveaux trajets intra-journaliers)
+                odometer_sensor,
+                # Sensor autonomie restante (réactif sur odometer + entities carburant)
+                autonomy_sensor,
+                # Sensors km périodiques — calculés en Python, réactifs sur odometer + snapshot
+                GeoRideKmJournaliersSensor(entry, tracker, hass, odometer_sensor),
+                GeoRideKmHebdomadairesSensor(entry, tracker, hass, odometer_sensor),
+                GeoRideKmMensuelsSensor(entry, tracker, hass, odometer_sensor),
+                # Sensors entretien — km restants et jours restants calculés en Python
+                GeoRideKmRestantsChaineSensor(entry, tracker, hass, odometer_sensor),
+                GeoRideKmRestantsVidangeSensor(entry, tracker, hass, odometer_sensor),
+                GeoRideKmRestantsRevisionSensor(entry, tracker, hass, odometer_sensor),
+                GeoRideJoursRestantsRevisionSensor(entry, tracker, hass),
+                # Sensors alimentés par le coordinator status (données /user/trackers)
+                GeoRideTrackerStatusSensor(status_coordinator, entry, tracker),
+                GeoRideExternalBatterySensor(status_coordinator, entry, tracker),
+                GeoRideInternalBatterySensor(status_coordinator, entry, tracker),
+                # Sensor dernière alarme (alimenté par Socket.IO)
+                GeoRideLastAlarmSensor(entry, tracker),
+            ]
+        )
 
     async_add_entities(sensors)
     _LOGGER.info("Added %d sensors for %d trackers", len(sensors), len(trackers))
@@ -101,6 +117,7 @@ async def async_setup_entry(
 # ════════════════════════════════════════════════════════════════════════════
 # COORDINATORS
 # ════════════════════════════════════════════════════════════════════════════
+
 
 class GeoRideTripsCoordinator(DataUpdateCoordinator):
     """Coordinator to manage fetching GeoRide trips data (30 days).
@@ -114,7 +131,15 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
        a changé, les callbacks on_new_trip() sont appelés.
     """
 
-    def __init__(self, hass, api, tracker_id, tracker_name, scan_interval=3600, trips_days_back=30):
+    def __init__(
+        self,
+        hass,
+        api,
+        tracker_id,
+        tracker_name,
+        scan_interval=3600,
+        trips_days_back=30,
+    ):
         self.api = api
         self.tracker_id = tracker_id
         self.tracker_name = tracker_name
@@ -142,11 +167,13 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
             Fonction de désenregistrement.
         """
         self._new_trip_callbacks.append(callback)
+
         def unregister():
             try:
                 self._new_trip_callbacks.remove(callback)
             except ValueError:
                 pass
+
         return unregister
 
     def on_stop_confirmed(self, callback) -> callable:
@@ -158,11 +185,13 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
             Fonction de désenregistrement (pour annulation anticipée).
         """
         self._stop_confirmed_callbacks.append(callback)
+
         def unregister():
             try:
                 self._stop_confirmed_callbacks.remove(callback)
             except ValueError:
                 pass
+
         return unregister
 
     def attach_status_coordinator(self, status_coordinator) -> None:
@@ -186,7 +215,8 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
         )
         _LOGGER.debug(
             "TripsCoordinator %s: abonné au StatusCoordinator (lock detection active, état initial locked=%s)",
-            self.tracker_name, self._last_locked_state,
+            self.tracker_name,
+            self._last_locked_state,
         )
 
     def detach_status_coordinator(self) -> None:
@@ -195,6 +225,17 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
             self._status_unsub()
             self._status_unsub = None
         self._status_coordinator = None
+
+    @property
+    def is_locked(self) -> bool | None:
+        """État de verrouillage via le StatusCoordinator attaché.
+
+        None si aucun StatusCoordinator attaché ou pas encore de données.
+        Point d'accès public — ne pas lire _status_coordinator ailleurs.
+        """
+        if self._status_coordinator is None:
+            return None
+        return self._status_coordinator.is_locked
 
     @callback
     def _handle_status_update(self) -> None:
@@ -235,12 +276,14 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
             except Exception as err:
                 _LOGGER.error(
                     "%s: erreur dans callback on_stop_confirmed : %s",
-                    self.tracker_name, err,
+                    self.tracker_name,
+                    err,
                 )
 
     async def _async_update_data(self):
         try:
             from datetime import timezone as tz
+
             from_date = datetime.now(tz.utc) - timedelta(days=self.trips_days_back)
             to_date = datetime.now(tz.utc)
 
@@ -249,7 +292,9 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
             if trips:
                 trips.sort(key=lambda x: x.get("startTime", ""), reverse=True)
 
-            _LOGGER.debug("Fetched %d trips for tracker %s", len(trips), self.tracker_id)
+            _LOGGER.debug(
+                "Fetched %d trips for tracker %s", len(trips), self.tracker_id
+            )
 
             # Détecter un nouveau trajet (filet de sécurité si Socket.IO est down)
             if trips:
@@ -258,7 +303,9 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
                 if self._last_trip_id is not None and latest_id != self._last_trip_id:
                     _LOGGER.info(
                         "New trip detected for %s (was %s, now %s) — triggering lifetime refresh",
-                        self.tracker_name, self._last_trip_id, latest_id,
+                        self.tracker_name,
+                        self._last_trip_id,
+                        latest_id,
                     )
                     for cb in list(self._new_trip_callbacks):
                         try:
@@ -281,7 +328,15 @@ class GeoRideLifetimeTripsCoordinator(DataUpdateCoordinator):
     et fusionnés dans GeoRideRealOdometerSensor.
     """
 
-    def __init__(self, hass, api, tracker_id, tracker_name, activation_date, lifetime_scan_interval=86400):
+    def __init__(
+        self,
+        hass,
+        api,
+        tracker_id,
+        tracker_name,
+        activation_date,
+        lifetime_scan_interval=86400,
+    ):
         self.api = api
         self.tracker_id = tracker_id
         self.tracker_name = tracker_name
@@ -302,9 +357,13 @@ class GeoRideLifetimeTripsCoordinator(DataUpdateCoordinator):
         self._midnight_unsub = async_track_time_change(
             self.hass,
             self._midnight_callback,
-            hour=0, minute=0, second=0,
+            hour=0,
+            minute=0,
+            second=0,
         )
-        _LOGGER.debug("Midnight refresh scheduled for lifetime coordinator %s", self.tracker_name)
+        _LOGGER.debug(
+            "Midnight refresh scheduled for lifetime coordinator %s", self.tracker_name
+        )
 
     def unschedule_midnight_refresh(self) -> None:
         """Annuler le refresh minuit."""
@@ -315,15 +374,20 @@ class GeoRideLifetimeTripsCoordinator(DataUpdateCoordinator):
     @callback
     def _midnight_callback(self, now) -> None:
         """Déclencher un refresh du coordinator lifetime à minuit."""
-        _LOGGER.info("Midnight refresh triggered for lifetime coordinator %s", self.tracker_name)
+        _LOGGER.info(
+            "Midnight refresh triggered for lifetime coordinator %s", self.tracker_name
+        )
         self.hass.async_create_task(self.async_request_refresh())
 
     async def _async_update_data(self):
         try:
             from datetime import timezone as tz
+
             if self.activation_date:
                 try:
-                    from_date = datetime.fromisoformat(self.activation_date.replace('Z', '+00:00'))
+                    from_date = datetime.fromisoformat(
+                        self.activation_date.replace("Z", "+00:00")
+                    )
                 except Exception:
                     from_date = datetime.now(tz.utc) - timedelta(days=1825)
             else:
@@ -333,7 +397,9 @@ class GeoRideLifetimeTripsCoordinator(DataUpdateCoordinator):
 
             _LOGGER.info(
                 "Fetching lifetime trips for %s from %s to %s",
-                self.tracker_name, from_date.date(), to_date.date()
+                self.tracker_name,
+                from_date.date(),
+                to_date.date(),
             )
 
             trips = await self.api.get_trips(self.tracker_id, from_date, to_date)
@@ -341,7 +407,9 @@ class GeoRideLifetimeTripsCoordinator(DataUpdateCoordinator):
             if trips:
                 trips.sort(key=lambda x: x.get("startTime", ""))
 
-            _LOGGER.info("Fetched %d lifetime trips for tracker %s", len(trips), self.tracker_id)
+            _LOGGER.info(
+                "Fetched %d lifetime trips for tracker %s", len(trips), self.tracker_id
+            )
 
             return {
                 "trips": trips,
@@ -360,7 +428,9 @@ class GeoRideTrackerStatusCoordinator(DataUpdateCoordinator):
     isLocked, latitude/longitude — used as fallback when Socket.IO is unavailable.
     """
 
-    def __init__(self, hass, api, tracker_id: str, tracker_name: str, scan_interval: int = 300):
+    def __init__(
+        self, hass, api, tracker_id: str, tracker_name: str, scan_interval: int = 300
+    ):
         self.api = api
         self.tracker_id = tracker_id
         self.tracker_name = tracker_name
@@ -371,6 +441,13 @@ class GeoRideTrackerStatusCoordinator(DataUpdateCoordinator):
             name=f"GeoRide Status {tracker_name}",
             update_interval=timedelta(seconds=scan_interval),
         )
+
+    @property
+    def is_locked(self) -> bool | None:
+        """État de verrouillage courant (isLocked), None si pas de données."""
+        if not self.data:
+            return None
+        return bool(self.data.get("isLocked", False))
 
     async def _async_update_data(self) -> dict:
         """Return the raw tracker dict for this tracker_id."""
@@ -386,7 +463,9 @@ class GeoRideTrackerStatusCoordinator(DataUpdateCoordinator):
                         tracker.get("status"),
                     )
                     return tracker
-            _LOGGER.warning("Tracker %s not found in /user/trackers response", self.tracker_id)
+            _LOGGER.warning(
+                "Tracker %s not found in /user/trackers response", self.tracker_id
+            )
             return {}
         except Exception as err:
             raise UpdateFailed(f"Error fetching tracker status: {err}")
@@ -395,6 +474,7 @@ class GeoRideTrackerStatusCoordinator(DataUpdateCoordinator):
 # ════════════════════════════════════════════════════════════════════════════
 # MANAGER — SNAPSHOTS MINUIT (km_debut_journee / semaine / mois)
 # ════════════════════════════════════════════════════════════════════════════
+
 
 class GeoRideMidnightSnapshotManager:
     """Gestionnaire des snapshots odometer à minuit.
@@ -440,7 +520,9 @@ class GeoRideMidnightSnapshotManager:
         self._unsub = async_track_time_change(
             self._hass,
             self._midnight_callback,
-            hour=0, minute=0, second=0,
+            hour=0,
+            minute=0,
+            second=0,
         )
         _LOGGER.debug(
             "MidnightSnapshotManager %s: programmé (snapshots minuit actifs)",
@@ -469,7 +551,8 @@ class GeoRideMidnightSnapshotManager:
         if entity_id is None:
             _LOGGER.warning(
                 "MidnightSnapshotManager %s: entity_id None, impossible de set value %.2f",
-                self.tracker_name, value,
+                self.tracker_name,
+                value,
             )
             return
         self._hass.async_create_task(
@@ -487,6 +570,7 @@ class GeoRideMidnightSnapshotManager:
         # Résolution lazy des entity_id (le registry est peuplé après le setup)
         if not self._entities_resolved:
             from .helpers import resolve_entity_id
+
             self._entity_debut_journee = resolve_entity_id(
                 self._hass, "number", self.tracker_id, "km_debut_journee"
             )
@@ -510,7 +594,8 @@ class GeoRideMidnightSnapshotManager:
         self._set_number(self._entity_debut_journee, odometer_km)
         _LOGGER.info(
             "MidnightSnapshotManager %s: km_debut_journee = %.1f km",
-            self.tracker_name, odometer_km,
+            self.tracker_name,
+            odometer_km,
         )
 
         # Snapshot hebdomadaire — uniquement le lundi (weekday == 0)
@@ -518,7 +603,8 @@ class GeoRideMidnightSnapshotManager:
             self._set_number(self._entity_debut_semaine, odometer_km)
             _LOGGER.info(
                 "MidnightSnapshotManager %s: km_debut_semaine = %.1f km (lundi)",
-                self.tracker_name, odometer_km,
+                self.tracker_name,
+                odometer_km,
             )
 
         # Snapshot mensuel — le 1er du mois à minuit
@@ -526,13 +612,15 @@ class GeoRideMidnightSnapshotManager:
             self._set_number(self._entity_debut_mois, odometer_km)
             _LOGGER.info(
                 "MidnightSnapshotManager %s: km_debut_mois = %.1f km (1er du mois)",
-                self.tracker_name, odometer_km,
+                self.tracker_name,
+                odometer_km,
             )
 
 
 # ════════════════════════════════════════════════════════════════════════════
 # SENSORS — KM PÉRIODIQUES (journalier, hebdomadaire, mensuel)
 # ════════════════════════════════════════════════════════════════════════════
+
 
 class _GeoRideKmPeriodBase(SensorEntity, RestoreEntity):
     """Classe de base pour les sensors km périodiques.
@@ -601,7 +689,9 @@ class _GeoRideKmPeriodBase(SensorEntity, RestoreEntity):
         watched = [self._odometer_sensor.entity_id, self._snapshot_entity]
         self.async_on_remove(
             async_track_state_change_event(
-                self._hass, watched, self._handle_state_change,
+                self._hass,
+                watched,
+                self._handle_state_change,
             )
         )
         # Pas de _recalculate() ici — on attend le premier state_change_event
@@ -620,7 +710,8 @@ class _GeoRideKmPeriodBase(SensorEntity, RestoreEntity):
         ):
             _LOGGER.debug(
                 "%s: transition démarrage odometer ignorée (old=%s)",
-                self._attr_name, old_state.state if old_state else "None",
+                self._attr_name,
+                old_state.state if old_state else "None",
             )
             return
 
@@ -667,7 +758,10 @@ class _GeoRideKmPeriodBase(SensorEntity, RestoreEntity):
 
         _LOGGER.debug(
             "%s: odometer=%.1f km - snapshot=%.1f km = %.1f km",
-            self._attr_name, odometer_km, snapshot_km, km,
+            self._attr_name,
+            odometer_km,
+            snapshot_km,
+            km,
         )
 
     @property
@@ -683,7 +777,11 @@ class GeoRideKmJournaliersSensor(_GeoRideKmPeriodBase):
     """Sensor km parcourus aujourd'hui (odometer - snapshot minuit)."""
 
     def __init__(self, entry, tracker, hass, odometer_sensor) -> None:
-        slug = tracker.get("trackerName", f"Tracker {tracker.get('trackerId')}").lower().replace(" ", "_")
+        slug = (
+            tracker.get("trackerName", f"Tracker {tracker.get('trackerId')}")
+            .lower()
+            .replace(" ", "_")
+        )
         super().__init__(
             entry=entry,
             tracker=tracker,
@@ -700,7 +798,11 @@ class GeoRideKmHebdomadairesSensor(_GeoRideKmPeriodBase):
     """Sensor km parcourus cette semaine (odometer - snapshot lundi minuit)."""
 
     def __init__(self, entry, tracker, hass, odometer_sensor) -> None:
-        slug = tracker.get("trackerName", f"Tracker {tracker.get('trackerId')}").lower().replace(" ", "_")
+        slug = (
+            tracker.get("trackerName", f"Tracker {tracker.get('trackerId')}")
+            .lower()
+            .replace(" ", "_")
+        )
         super().__init__(
             entry=entry,
             tracker=tracker,
@@ -717,7 +819,11 @@ class GeoRideKmMensuelsSensor(_GeoRideKmPeriodBase):
     """Sensor km parcourus ce mois (odometer - snapshot 1er du mois)."""
 
     def __init__(self, entry, tracker, hass, odometer_sensor) -> None:
-        slug = tracker.get("trackerName", f"Tracker {tracker.get('trackerId')}").lower().replace(" ", "_")
+        slug = (
+            tracker.get("trackerName", f"Tracker {tracker.get('trackerId')}")
+            .lower()
+            .replace(" ", "_")
+        )
         super().__init__(
             entry=entry,
             tracker=tracker,
@@ -733,6 +839,7 @@ class GeoRideKmMensuelsSensor(_GeoRideKmPeriodBase):
 # ════════════════════════════════════════════════════════════════════════════
 # SENSORS — TRIPS
 # ════════════════════════════════════════════════════════════════════════════
+
 
 class GeoRideLastTripSensor(CoordinatorEntity, SensorEntity):
     """Sensor for last trip (simple)."""
@@ -817,7 +924,9 @@ class GeoRideLastTripDetailsSensor(CoordinatorEntity, SensorEntity):
         end_time = trip.get("endTime", "")
 
         try:
-            start_dt = dt_util.as_local(datetime.fromisoformat(start_time.replace('Z', '+00:00')))
+            start_dt = dt_util.as_local(
+                datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            )
             date_formatted = start_dt.strftime("%d/%m/%Y")
             start_hour = start_dt.strftime("%H:%M")
         except Exception:
@@ -825,14 +934,20 @@ class GeoRideLastTripDetailsSensor(CoordinatorEntity, SensorEntity):
             start_hour = ""
 
         try:
-            end_dt = dt_util.as_local(datetime.fromisoformat(end_time.replace('Z', '+00:00')))
+            end_dt = dt_util.as_local(
+                datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+            )
             end_hour = end_dt.strftime("%H:%M")
         except Exception:
             end_hour = ""
 
         time_range = f"{start_hour} - {end_hour}" if start_hour and end_hour else ""
         distance_formatted = f"{distance_km:.1f} km"
-        duration_formatted = f"{int(duration_min)} min" if duration_min < 60 else f"{duration_hours:.1f}h"
+        duration_formatted = (
+            f"{int(duration_min)} min"
+            if duration_min < 60
+            else f"{duration_hours:.1f}h"
+        )
         speed_formatted = f"{avg_speed_kmh:.1f} km/h"
         summary = f"{distance_formatted} en {duration_formatted} à {speed_formatted}"
 
@@ -930,6 +1045,7 @@ class GeoRideTripCountSensor(CoordinatorEntity, SensorEntity):
 # SENSORS — LIFETIME ODOMETER
 # ════════════════════════════════════════════════════════════════════════════
 
+
 class GeoRideLifetimeOdometerSensor(CoordinatorEntity, SensorEntity):
     """Sensor for lifetime odometer."""
 
@@ -1003,8 +1119,16 @@ class GeoRideLifetimeOdometerSensor(CoordinatorEntity, SensorEntity):
             "total_distance_m": total_distance_m,
             "total_duration_hours": total_duration_hours,
             "total_duration_days": round(total_duration_hours / 24, 2),
-            "average_distance_per_trip_km": round(total_distance_m / METERS_TO_KM / len(trips), 2) if trips else 0,
-            "average_distance_per_day_km": round(total_distance_m / METERS_TO_KM / days_tracked, 2) if days_tracked > 0 else 0,
+            "average_distance_per_trip_km": round(
+                total_distance_m / METERS_TO_KM / len(trips), 2
+            )
+            if trips
+            else 0,
+            "average_distance_per_day_km": round(
+                total_distance_m / METERS_TO_KM / days_tracked, 2
+            )
+            if days_tracked > 0
+            else 0,
             "first_trip_date": first_trip_date,
             "last_trip_date": last_trip_date,
             "days_tracked": days_tracked,
@@ -1062,6 +1186,7 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
 
         # Résoudre l'entity_id de l'offset via le registry
         from .helpers import resolve_entity_id
+
         self._offset_entity_id = resolve_entity_id(
             self._hass, "number", self.tracker_id, "odometer_offset"
         )
@@ -1075,6 +1200,7 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
 
         # S'abonner aux changements de l'offset
         from homeassistant.helpers.event import async_track_state_change_event
+
         if self._offset_entity_id:
             self.async_on_remove(
                 async_track_state_change_event(
@@ -1095,7 +1221,8 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
             self._offset_ready = True
             _LOGGER.debug(
                 "Odometer %s: offset prêt (%.2f km), première publication fiable",
-                self.tracker_name, self._get_offset_km(),
+                self.tracker_name,
+                self._get_offset_km(),
             )
         self.async_write_ha_state()
 
@@ -1122,7 +1249,8 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
         recent_trips = self._recent_coordinator.data or []
         if last_lifetime_date:
             new_trips = [
-                t for t in recent_trips
+                t
+                for t in recent_trips
                 if (t.get("startTime") or "") > last_lifetime_date
             ]
         else:
@@ -1133,7 +1261,10 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
         if new_trips:
             _LOGGER.debug(
                 "Odometer %s: base=%.1f km + delta=%.1f km (%d new trips today)",
-                self.tracker_name, base_km, delta_km, len(new_trips),
+                self.tracker_name,
+                base_km,
+                delta_km,
+                len(new_trips),
             )
 
         return base_km, delta_km, last_lifetime_date
@@ -1152,10 +1283,16 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
         base_km, delta_km, last_lifetime_date = self._compute_tracker_km()
         new_tracker_km = base_km + delta_km
 
-        if self._last_known_tracker_km is not None and new_tracker_km < self._last_known_tracker_km:
+        if (
+            self._last_known_tracker_km is not None
+            and new_tracker_km < self._last_known_tracker_km
+        ):
             _LOGGER.warning(
                 "Odometer guard %s: régression détectée (%.1f km → %.1f km), valeur maintenue à %.1f km",
-                self.tracker_name, self._last_known_tracker_km, new_tracker_km, self._last_known_tracker_km,
+                self.tracker_name,
+                self._last_known_tracker_km,
+                new_tracker_km,
+                self._last_known_tracker_km,
             )
             # Forcer delta pour maintenir la valeur connue
             delta_km = self._last_known_tracker_km - base_km
@@ -1168,7 +1305,11 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
         if not self._offset_entity_id:
             return 0.0
         offset = self._hass.states.get(self._offset_entity_id)
-        return float(offset.state) if offset and offset.state not in (None, "unknown", "unavailable") else 0
+        return (
+            float(offset.state)
+            if offset and offset.state not in (None, "unknown", "unavailable")
+            else 0
+        )
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -1207,11 +1348,17 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
         lifetime_trips = lifetime_data.get("trips", []) if lifetime_data else []
         recent_trips = self._recent_coordinator.data or []
         if last_lifetime_date:
-            new_trips = [t for t in recent_trips if (t.get("startTime") or "") > last_lifetime_date]
+            new_trips = [
+                t
+                for t in recent_trips
+                if (t.get("startTime") or "") > last_lifetime_date
+            ]
         else:
             new_trips = recent_trips
 
-        total_duration_ms = sum(t.get("duration", 0) for t in lifetime_trips + new_trips)
+        total_duration_ms = sum(
+            t.get("duration", 0) for t in lifetime_trips + new_trips
+        )
         total_duration_hours = round(total_duration_ms / MILLISECONDS_TO_HOURS, 2)
 
         all_trips = lifetime_trips + new_trips
@@ -1242,11 +1389,15 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
         tracker_km = base_km + delta_km
         offset_km = value - tracker_km
         if not self._offset_entity_id:
-            _LOGGER.error("Cannot set odometer for %s: offset entity_id not resolved", self.tracker_name)
+            _LOGGER.error(
+                "Cannot set odometer for %s: offset entity_id not resolved",
+                self.tracker_name,
+            )
             return
         self._hass.async_create_task(
             self._hass.services.async_call(
-                "number", "set_value",
+                "number",
+                "set_value",
                 {"entity_id": self._offset_entity_id, "value": offset_km},
             )
         )
@@ -1254,14 +1405,18 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
         self._last_known_tracker_km = tracker_km
         _LOGGER.info(
             "Odometer set for %s: %.1f km (base=%.1f km, delta=%.1f km, offset=%.1f km)",
-            self.tracker_name, value, base_km, delta_km, offset_km
+            self.tracker_name,
+            value,
+            base_km,
+            delta_km,
+            offset_km,
         )
-
 
 
 # ════════════════════════════════════════════════════════════════════════════
 # SENSOR — AUTONOMIE RESTANTE (réactif)
 # ════════════════════════════════════════════════════════════════════════════
+
 
 class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
     """Sensor autonomie restante, mis à jour à chaque changement d'odometer.
@@ -1283,7 +1438,9 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
       - number.<moto>_nb_pleins_enregistres
     """
 
-    def __init__(self, entry, tracker, hass, odometer_sensor: "GeoRideRealOdometerSensor"):
+    def __init__(
+        self, entry, tracker, hass, odometer_sensor: "GeoRideRealOdometerSensor"
+    ):
         self._entry = entry
         self._tracker = tracker
         self._hass = hass
@@ -1328,6 +1485,7 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
 
         # Résolution des entity_id via le registry (fiable, indépendant du slug)
         from .helpers import resolve_entity_id
+
         self._entity_km_dernier_plein = resolve_entity_id(
             self._hass, "number", self.tracker_id, "km_dernier_plein"
         )
@@ -1353,13 +1511,15 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
         from homeassistant.helpers.event import async_track_state_change_event
 
         watched = [
-            eid for eid in [
+            eid
+            for eid in [
                 self._odometer_sensor.entity_id,
                 self._entity_km_dernier_plein,
                 self._entity_autonomie_totale,
                 self._entity_autonomie_moyenne,
                 self._entity_nb_pleins,
-            ] if eid is not None
+            ]
+            if eid is not None
         ]
 
         self.async_on_remove(
@@ -1390,29 +1550,35 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
         return default
 
     def _recalculate(self) -> None:
-        odometer_km      = self._odometer_sensor.native_value or 0.0
+        odometer_km = self._odometer_sensor.native_value or 0.0
         km_dernier_plein = self._get_float(self._entity_km_dernier_plein)
         autonomie_totale = self._get_float(self._entity_autonomie_totale, 150.0)
 
         km_parcourus = max(odometer_km - km_dernier_plein, 0.0)
-        km_restants  = max(autonomie_totale - km_parcourus, 0.0)
+        km_restants = max(autonomie_totale - km_parcourus, 0.0)
 
         self._attr_native_value = round(km_restants, 1)
 
         _LOGGER.debug(
             "Autonomie %s: ref=%.1f km (manuelle), parcourus=%.1f km (depuis %.1f), restants=%.1f km",
-            self.tracker_name, autonomie_totale, km_parcourus, km_dernier_plein, km_restants,
+            self.tracker_name,
+            autonomie_totale,
+            km_parcourus,
+            km_dernier_plein,
+            km_restants,
         )
 
     @property
     def extra_state_attributes(self) -> dict:
         nb_pleins = self._get_float(self._entity_nb_pleins)
         autonomie_moyenne = self._get_float(self._entity_autonomie_moyenne)
-        autonomie_totale  = self._get_float(self._entity_autonomie_totale, 150.0)
+        autonomie_totale = self._get_float(self._entity_autonomie_totale, 150.0)
         return {
             "autonomie_reference": "manuelle",
             "autonomie_totale_km": autonomie_totale,
-            "autonomie_moyenne_calculee_km": autonomie_moyenne if autonomie_moyenne > 0 else None,
+            "autonomie_moyenne_calculee_km": autonomie_moyenne
+            if autonomie_moyenne > 0
+            else None,
             "nb_pleins_enregistres": int(nb_pleins),
             "km_dernier_plein": self._get_float(self._entity_km_dernier_plein),
         }
@@ -1421,6 +1587,7 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
 # ════════════════════════════════════════════════════════════════════════════
 # SENSORS — ENTRETIENS (km restants + jours restants calculés en Python)
 # ════════════════════════════════════════════════════════════════════════════
+
 
 class _GeoRideEntretienKmBase(SensorEntity, RestoreEntity):
     """Classe de base pour les sensors km restants entretien.
@@ -1491,25 +1658,36 @@ class _GeoRideEntretienKmBase(SensorEntity, RestoreEntity):
 
         # Résolution des entity_id via le registry
         from .helpers import resolve_entity_id
+
         self._entity_intervalle = resolve_entity_id(
-            self._hass, "number", self.tracker_id, self._intervalle_key,
+            self._hass,
+            "number",
+            self.tracker_id,
+            self._intervalle_key,
         )
         self._entity_km_dernier = resolve_entity_id(
-            self._hass, "number", self.tracker_id, self._km_dernier_key,
+            self._hass,
+            "number",
+            self.tracker_id,
+            self._km_dernier_key,
         )
 
         from homeassistant.helpers.event import async_track_state_change_event
 
         watched = [
-            eid for eid in [
+            eid
+            for eid in [
                 self._odometer_sensor.entity_id,
                 self._entity_intervalle,
                 self._entity_km_dernier,
-            ] if eid is not None
+            ]
+            if eid is not None
         ]
         self.async_on_remove(
             async_track_state_change_event(
-                self._hass, watched, self._handle_state_change,
+                self._hass,
+                watched,
+                self._handle_state_change,
             )
         )
         # Pas de _recalculate() ici — on attend le premier state_change_event
@@ -1532,9 +1710,9 @@ class _GeoRideEntretienKmBase(SensorEntity, RestoreEntity):
         return default
 
     def _recalculate(self) -> None:
-        odometer_km   = self._odometer_sensor.native_value or 0.0
+        odometer_km = self._odometer_sensor.native_value or 0.0
         intervalle_km = self._get_float(self._entity_intervalle, 0.0)
-        km_dernier    = self._get_float(self._entity_km_dernier, 0.0)
+        km_dernier = self._get_float(self._entity_km_dernier, 0.0)
 
         # Si les deux valeurs de référence sont à 0 → pas encore configuré
         if intervalle_km == 0 and km_dernier == 0:
@@ -1546,7 +1724,11 @@ class _GeoRideEntretienKmBase(SensorEntity, RestoreEntity):
 
         _LOGGER.debug(
             "%s: dernier=%.1f km + intervalle=%.1f km - odometer=%.1f km = restants=%.1f km",
-            self._attr_name, km_dernier, intervalle_km, odometer_km, km_restants,
+            self._attr_name,
+            km_dernier,
+            intervalle_km,
+            odometer_km,
+            km_restants,
         )
 
     @property
@@ -1663,26 +1845,45 @@ class GeoRideJoursRestantsRevisionSensor(SensorEntity, RestoreEntity):
 
         # Résolution des entity_id via le registry
         from .helpers import resolve_entity_id
+
         self._entity_date_dernier = resolve_entity_id(
-            self._hass, "datetime", self.tracker_id, "date_dernier_entretien_revision",
+            self._hass,
+            "datetime",
+            self.tracker_id,
+            "date_dernier_entretien_revision",
         )
         self._entity_intervalle_j = resolve_entity_id(
-            self._hass, "number", self.tracker_id, "intervalle_jours_revision",
+            self._hass,
+            "number",
+            self.tracker_id,
+            "intervalle_jours_revision",
         )
 
-        from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change
+        from homeassistant.helpers.event import (
+            async_track_state_change_event,
+            async_track_time_change,
+        )
 
-        watched = [eid for eid in [self._entity_date_dernier, self._entity_intervalle_j] if eid is not None]
+        watched = [
+            eid
+            for eid in [self._entity_date_dernier, self._entity_intervalle_j]
+            if eid is not None
+        ]
         self.async_on_remove(
             async_track_state_change_event(
-                self._hass, watched, self._handle_state_change,
+                self._hass,
+                watched,
+                self._handle_state_change,
             )
         )
         # Recalcul quotidien à minuit (le nombre de jours change chaque jour même sans action)
         self.async_on_remove(
             async_track_time_change(
-                self._hass, self._handle_midnight,
-                hour=0, minute=0, second=0,
+                self._hass,
+                self._handle_midnight,
+                hour=0,
+                minute=0,
+                second=0,
             )
         )
         # Pas de _recalculate() ici — on attend le premier state_change_event
@@ -1728,12 +1929,14 @@ class GeoRideJoursRestantsRevisionSensor(SensorEntity, RestoreEntity):
             date_dernier = datetime.fromisoformat(dt_state.state)
             if date_dernier.tzinfo is None:
                 from datetime import timezone as tz
+
                 date_dernier = date_dernier.replace(tzinfo=tz.utc)
         except (ValueError, TypeError):
             self._attr_native_value = 0.0
             return
 
         from datetime import timezone as tz
+
         now = datetime.now(tz.utc)
         echeance = date_dernier + timedelta(days=intervalle_j)
         jours_restants = (echeance - now).days
@@ -1743,8 +1946,10 @@ class GeoRideJoursRestantsRevisionSensor(SensorEntity, RestoreEntity):
         _LOGGER.debug(
             "%s: dernier=%s + %d jours → échéance=%s → restants=%d j",
             self._attr_name,
-            date_dernier.date(), int(intervalle_j),
-            echeance.date(), jours_restants,
+            date_dernier.date(),
+            int(intervalle_j),
+            echeance.date(),
+            jours_restants,
         )
 
     @property
@@ -1772,6 +1977,7 @@ class GeoRideJoursRestantsRevisionSensor(SensorEntity, RestoreEntity):
 # ════════════════════════════════════════════════════════════════════════════
 # SENSORS — TRACKER STATUS (alimentés par GeoRideTrackerStatusCoordinator)
 # ════════════════════════════════════════════════════════════════════════════
+
 
 class GeoRideTrackerStatusSensor(CoordinatorEntity, SensorEntity):
     """Sensor exposant le statut réseau du tracker (online / offline)."""
@@ -1915,6 +2121,7 @@ class GeoRideInternalBatterySensor(CoordinatorEntity, SensorEntity):
 # SENSOR — LAST ALARM (alimenté par Socket.IO)
 # ════════════════════════════════════════════════════════════════════════════
 
+
 class GeoRideLastAlarmSensor(RestoreEntity, SensorEntity):
     """Sensor exposant le type de la dernière alarme reçue via Socket.IO."""
 
@@ -1972,7 +2179,9 @@ class GeoRideLastAlarmSensor(RestoreEntity, SensorEntity):
             self._unregister_alarm = socket_manager.register_callback(
                 self.tracker_id, "alarm", self._handle_alarm
             )
-            _LOGGER.debug("LastAlarmSensor %s registered with socket_manager", self.tracker_id)
+            _LOGGER.debug(
+                "LastAlarmSensor %s registered with socket_manager", self.tracker_id
+            )
         else:
             _LOGGER.debug(
                 "LastAlarmSensor %s: pas de socket_manager disponible au démarrage "
@@ -2001,5 +2210,6 @@ class GeoRideLastAlarmSensor(RestoreEntity, SensorEntity):
         self.schedule_update_ha_state()
         _LOGGER.info(
             "LastAlarmSensor %s: nouvelle alarme %s",
-            self.tracker_id, alarm_type,
+            self.tracker_id,
+            alarm_type,
         )
