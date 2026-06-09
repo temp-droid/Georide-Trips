@@ -1,5 +1,6 @@
 """GeoRide API Client."""
 
+import asyncio
 import logging
 import aiohttp
 from datetime import datetime, timedelta, timezone
@@ -30,6 +31,9 @@ class GeoRideTripsAPI:
         self.session = session
         self.base_url = "https://api.georide.fr"
         self.token = None
+        # Sérialise les logins : un seul re-login partagé entre toutes les
+        # requêtes concurrentes (évite la tempête de logins sur 401).
+        self._login_lock = asyncio.Lock()
 
     async def login(self) -> bool:
         """Login to GeoRide API.
@@ -55,6 +59,20 @@ class GeoRideTripsAPI:
         except Exception as err:
             raise GeoRideApiError(f"Error during login: {err}") from err
 
+    async def _ensure_token(self) -> None:
+        """Login si aucun token, en partageant un seul login entre tâches."""
+        if self.token:
+            return
+        async with self._login_lock:
+            if not self.token:
+                await self.login()
+
+    async def _relogin_if_stale(self, stale_token: str) -> None:
+        """Re-login après un 401, sauf si une autre tâche l'a déjà fait."""
+        async with self._login_lock:
+            if self.token == stale_token:
+                await self.login()
+
     async def _request(
         self,
         method: str,
@@ -71,11 +89,11 @@ class GeoRideTripsAPI:
         - GeoRideApiError sur erreur HTTP/transport (jamais de [] silencieux),
         - GeoRideAuthError si le 401 persiste après re-login.
         """
-        if not self.token:
-            await self.login()
+        await self._ensure_token()
 
         url = f"{self.base_url}{path}"
-        headers = {"Authorization": f"Bearer {self.token}"}
+        token_used = self.token
+        headers = {"Authorization": f"Bearer {token_used}"}
 
         try:
             async with self.session.request(
@@ -92,7 +110,7 @@ class GeoRideTripsAPI:
                 if response.status == 401:
                     if _retry:
                         _LOGGER.warning("Token expired, re-authenticating...")
-                        await self.login()
+                        await self._relogin_if_stale(token_used)
                         return await self._request(
                             method, path, params=params, json=json, _retry=False
                         )

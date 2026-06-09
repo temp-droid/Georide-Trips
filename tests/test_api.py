@@ -129,6 +129,41 @@ async def test_get_trip_positions_by_date_normalizes_bare_list(api, fake):
     assert result == [{"latitude": 1.0}]
 
 
+# --- login serialization (spec 1.5 / M2) ----------------------------------
+
+
+async def test_concurrent_401s_trigger_single_relogin(api, fake):
+    """Concurrent requests hitting 401 must share ONE re-login, not storm."""
+    import asyncio
+
+    api.token = "expired"
+    for _ in range(5):
+        fake.queue(*TRACKERS, payload={}, status=401)
+    fake.queue(*LOGIN, payload={"authToken": "fresh"})
+    for _ in range(5):
+        fake.queue(*TRACKERS, payload=[{"trackerId": 42}])
+
+    results = await asyncio.gather(*(api.get_trackers() for _ in range(5)))
+
+    assert all(r == [{"trackerId": 42}] for r in results)
+    assert fake.call_count("POST", "/user/login") == 1
+    assert api.token == "fresh"
+
+
+async def test_concurrent_cold_start_triggers_single_login(api, fake):
+    """Concurrent first requests (no token yet) must share ONE login."""
+    import asyncio
+
+    fake.queue(*LOGIN, payload={"authToken": "tok"})
+    for _ in range(5):
+        fake.queue(*TRACKERS, payload=[{"trackerId": 42}])
+
+    results = await asyncio.gather(*(api.get_trackers() for _ in range(5)))
+
+    assert all(r == [{"trackerId": 42}] for r in results)
+    assert fake.call_count("POST", "/user/login") == 1
+
+
 # --- action methods keep their bool/None contract -------------------------
 
 
