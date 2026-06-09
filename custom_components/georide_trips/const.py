@@ -2,14 +2,9 @@
 
 DOMAIN = "georide_trips"
 
-# API endpoints
-API_BASE_URL = "https://api.georide.fr"
-API_LOGIN = "/user/login"
-API_TRACKERS = "/user/trackers"
-API_TRIPS = "/tracker/{tracker_id}/trips"
-API_TRIP_POSITIONS = "/tracker/{tracker_id}/trip/{trip_id}/positions"
-API_ECO_MODE_ON = "/tracker/{tracker_id}/eco-mode/on"
-API_ECO_MODE_OFF = "/tracker/{tracker_id}/eco-mode/off"
+# API REST : les endpoints vivent dans api.py (source de vérité unique).
+# Ne pas redéfinir ici — l'ancien duplicata /eco-mode/on|off contredisait
+# le PUT /eco réellement utilisé et vérifié en production.
 
 # Socket.IO
 SOCKETIO_URL = "https://socket.georide.com"
@@ -28,13 +23,13 @@ CONF_GPS_MIN_ACCURACY = "gps_min_accuracy"
 CONF_GPS_MIN_DISTANCE = "gps_min_distance"
 
 # Default values
-DEFAULT_SCAN_INTERVAL = 3600            # 1 heure
+DEFAULT_SCAN_INTERVAL = 3600  # 1 heure
 DEFAULT_LIFETIME_SCAN_INTERVAL = 86400  # 24 heures
 DEFAULT_TRIPS_DAYS_BACK = 30
 DEFAULT_SOCKETIO_ENABLED = True
-DEFAULT_TRACKER_SCAN_INTERVAL = 300     # 5 minutes
-DEFAULT_GPS_MIN_ACCURACY = 0            # 0 = désactivé (aucun filtre)
-DEFAULT_GPS_MIN_DISTANCE = 10           # 10 mètres (0 = désactivé)
+DEFAULT_TRACKER_SCAN_INTERVAL = 300  # 5 minutes
+DEFAULT_GPS_MIN_ACCURACY = 0  # 0 = désactivé (aucun filtre)
+DEFAULT_GPS_MIN_DISTANCE = 10  # 10 mètres (0 = désactivé)
 
 # Service attributes
 ATTR_TRACKER_ID = "tracker_id"
