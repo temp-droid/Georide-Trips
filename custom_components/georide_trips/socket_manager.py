@@ -109,9 +109,16 @@ class GeoRideSocketManager:
         return self._connected
 
     async def start(self) -> None:
-        """Démarrer la connexion Socket.IO (appelé depuis async_setup_entry)."""
+        """Démarrer la connexion Socket.IO (appelé depuis async_setup_entry).
+
+        async_create_background_task (et non hass.loop.create_task) : la tâche
+        est suivie par HA et annulée à l'arrêt — sinon la boucle de reconnexion
+        peut survivre au unload ("Task was destroyed but it is pending").
+        """
         self._should_run = True
-        self._reconnect_task = self._hass.loop.create_task(self._run_loop())
+        self._reconnect_task = self._hass.async_create_background_task(
+            self._run_loop(), name="georide_trips_socketio_reconnect"
+        )
         _LOGGER.info(
             "GeoRide SocketManager started for %d trackers", len(self._tracker_ids)
         )
@@ -267,6 +274,10 @@ class GeoRideSocketManager:
             )
             # Bloquer jusqu'à déconnexion
             await self._sio.wait()
+        except asyncio.CancelledError:
+            # Annulation (unload/arrêt HA) : doit remonter jusqu'à _run_loop,
+            # jamais être avalée par le except générique ci-dessous.
+            raise
         except Exception as err:
             _LOGGER.error(
                 "Socket.IO connect failed: %s — %s: %s",
