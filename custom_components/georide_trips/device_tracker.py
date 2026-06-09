@@ -11,6 +11,7 @@ Filtres appliqués sur les événements Socket.IO :
   → pas d'entrée recorder quand la moto est à l'arrêt → plus de traits parasites
 - Distance minimale : micro-dérives GPS ignorées (seuil configurable, défaut 10m)
 """
+
 import logging
 import math
 
@@ -39,7 +40,10 @@ def _haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> f
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlam = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    a = (
+        math.sin(dphi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    )
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
@@ -55,12 +59,12 @@ async def async_setup_entry(
 
     entities = []
     for tracker in trackers:
-        entities.append(
-            GeoRidePositionTracker(hass, entry, tracker, api)
-        )
+        entities.append(GeoRidePositionTracker(hass, entry, tracker, api))
 
     async_add_entities(entities)
-    _LOGGER.info("Added %d device_tracker entities for %d trackers", len(entities), len(trackers))
+    _LOGGER.info(
+        "Added %d device_tracker entities for %d trackers", len(entities), len(trackers)
+    )
 
 
 class GeoRidePositionTracker(TrackerEntity):
@@ -180,8 +184,14 @@ class GeoRidePositionTracker(TrackerEntity):
                 self._tracker_name,
             )
 
-        # Position initiale via API REST (pour avoir quelque chose dès le démarrage)
-        await self._async_fetch_initial_position()
+        # Position initiale via API REST en tâche de fond : get_last_position
+        # enchaîne plusieurs appels API et ne doit pas bloquer l'ajout de
+        # l'entité (un événement Socket.IO peut la fournir avant, tant mieux).
+        self._entry.async_create_background_task(
+            self.hass,
+            self._async_fetch_initial_position(),
+            name=f"georide_trips_initial_position_{self._tracker_id}",
+        )
 
     async def async_will_remove_from_hass(self) -> None:
         """Nettoyage des abonnements."""
@@ -208,16 +218,22 @@ class GeoRidePositionTracker(TrackerEntity):
         lat = data.get("latitude")
         lon = data.get("longitude")
         if lat is None or lon is None:
-            _LOGGER.warning("Événement position sans lat/lon pour %s : %s", self._tracker_name, data)
+            _LOGGER.warning(
+                "Événement position sans lat/lon pour %s : %s", self._tracker_name, data
+            )
             return
 
         # ── 1. Filtre précision GPS ──────────────────────────────────────────
         accuracy = int(data.get("radius", 0) or 0)
-        min_accuracy = self._entry.options.get(CONF_GPS_MIN_ACCURACY, DEFAULT_GPS_MIN_ACCURACY)
+        min_accuracy = self._entry.options.get(
+            CONF_GPS_MIN_ACCURACY, DEFAULT_GPS_MIN_ACCURACY
+        )
         if min_accuracy > 0 and accuracy > min_accuracy:
             _LOGGER.debug(
                 "Position ignorée pour %s : précision insuffisante (radius=%dm > seuil=%dm)",
-                self._tracker_name, accuracy, min_accuracy,
+                self._tracker_name,
+                accuracy,
+                min_accuracy,
             )
             return
 
@@ -243,7 +259,9 @@ class GeoRidePositionTracker(TrackerEntity):
             return
 
         # ── 3. Filtre distance minimale (anti micro-dérive) ──────────────────
-        min_distance = self._entry.options.get(CONF_GPS_MIN_DISTANCE, DEFAULT_GPS_MIN_DISTANCE)
+        min_distance = self._entry.options.get(
+            CONF_GPS_MIN_DISTANCE, DEFAULT_GPS_MIN_DISTANCE
+        )
         if (
             min_distance > 0
             and self._latitude is not None
@@ -253,7 +271,9 @@ class GeoRidePositionTracker(TrackerEntity):
             if distance_m < min_distance:
                 _LOGGER.debug(
                     "Position ignorée pour %s : déplacement trop faible (%.1fm < seuil=%dm)",
-                    self._tracker_name, distance_m, min_distance,
+                    self._tracker_name,
+                    distance_m,
+                    min_distance,
                 )
                 return
 
@@ -270,7 +290,9 @@ class GeoRidePositionTracker(TrackerEntity):
         self.async_write_ha_state()
         _LOGGER.debug(
             "Position mise à jour pour %s : lat=%.5f lon=%.5f moving=True",
-            self._tracker_name, self._latitude, self._longitude,
+            self._tracker_name,
+            self._latitude,
+            self._longitude,
         )
 
     # ── Fallback API REST ────────────────────────────────────────────────────
@@ -281,11 +303,15 @@ class GeoRidePositionTracker(TrackerEntity):
             position = await self._api.get_last_position(self._tracker_id)
             if position:
                 accuracy = int(position.get("radius", 0) or 0)
-                min_accuracy = self._entry.options.get(CONF_GPS_MIN_ACCURACY, DEFAULT_GPS_MIN_ACCURACY)
+                min_accuracy = self._entry.options.get(
+                    CONF_GPS_MIN_ACCURACY, DEFAULT_GPS_MIN_ACCURACY
+                )
                 if min_accuracy > 0 and accuracy > min_accuracy:
                     _LOGGER.debug(
                         "Position initiale ignorée pour %s : précision insuffisante (radius=%dm > seuil=%dm)",
-                        self._tracker_name, accuracy, min_accuracy,
+                        self._tracker_name,
+                        accuracy,
+                        min_accuracy,
                     )
                     return
                 self._latitude = position.get("latitude")
@@ -298,12 +324,17 @@ class GeoRidePositionTracker(TrackerEntity):
                 self.async_write_ha_state()
                 _LOGGER.info(
                     "Position initiale (API) pour %s : lat=%s lon=%s",
-                    self._tracker_name, self._latitude, self._longitude,
+                    self._tracker_name,
+                    self._latitude,
+                    self._longitude,
                 )
             else:
-                _LOGGER.debug("Pas de position initiale disponible pour %s", self._tracker_name)
+                _LOGGER.debug(
+                    "Pas de position initiale disponible pour %s", self._tracker_name
+                )
         except Exception as err:
             _LOGGER.error(
                 "Erreur récupération position initiale pour %s : %s",
-                self._tracker_name, err,
+                self._tracker_name,
+                err,
             )

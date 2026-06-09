@@ -1,5 +1,6 @@
 """GeoRide Trips integration."""
 
+import asyncio
 import logging
 import voluptuous as vol
 
@@ -154,13 +155,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             scan_interval=tracker_scan_interval,
         )
 
-        await coordinator.async_config_entry_first_refresh()
-        await lifetime_coordinator.async_config_entry_first_refresh()
-        await status_coordinator.async_config_entry_first_refresh()
-
         coordinators[tracker_id] = coordinator
         lifetime_coordinators[tracker_id] = lifetime_coordinator
         tracker_status_coordinators[tracker_id] = status_coordinator
+
+    # Premier refresh trips + status en PARALLÈLE pour tous les trackers.
+    # Le lifetime (historique complet, potentiellement des années) est différé
+    # en tâche de fond plus bas pour ne pas bloquer le setup (timeout HA).
+    first_refreshes = [
+        coro
+        for tracker_id in coordinators
+        for coro in (
+            coordinators[tracker_id].async_config_entry_first_refresh(),
+            tracker_status_coordinators[tracker_id].async_config_entry_first_refresh(),
+        )
+    ]
+    results = await asyncio.gather(*first_refreshes, return_exceptions=True)
+    failures = [r for r in results if isinstance(r, Exception)]
+    if failures:
+        if len(failures) == len(first_refreshes):
+            raise ConfigEntryNotReady(
+                f"All initial refreshes failed: {failures[0]}"
+            ) from failures[0]
+        # Échec partiel : on continue, le coordinator en échec retentera
+        # selon son update_interval (entités indisponibles en attendant).
+        for failure in failures:
+            _LOGGER.warning(
+                "Initial refresh failed (will retry on schedule): %s", failure
+            )
 
     # Câbler la détection de verrouillage sur chaque coordinator récent
     # (via StatusCoordinator polling 5 min — indépendant du Socket.IO)
@@ -212,6 +234,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Setup platforms — les entités s'abonneront au socket_manager dans async_added_to_hass
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Premier fetch lifetime DIFFÉRÉ : séquentiel (un tracker à la fois pour
+    # ménager l'API), suivi par HA et annulé automatiquement à l'unload.
+    # Les capteurs odometer restent "unknown" (jamais 0) tant que la base
+    # lifetime n'est pas arrivée, grâce au gating _offset_ready.
+    async def _initial_lifetime_refresh() -> None:
+        for lifetime_coordinator in lifetime_coordinators.values():
+            await lifetime_coordinator.async_refresh()
+
+    entry.async_create_background_task(
+        hass,
+        _initial_lifetime_refresh(),
+        name="georide_trips_initial_lifetime_refresh",
+    )
 
     # Démarrer la connexion Socket.IO APRÈS le setup des plateformes
     # (les abonnements sont en place, on peut recevoir des événements)

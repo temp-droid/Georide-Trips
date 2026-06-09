@@ -1076,7 +1076,9 @@ class GeoRideLifetimeOdometerSensor(CoordinatorEntity, SensorEntity):
     def native_value(self):
         data = self.coordinator.data
         if not data or "trips" not in data:
-            return 0
+            # Pas encore de données lifetime (premier fetch différé) : unknown,
+            # jamais 0 — un 0 serait enregistré comme reset TOTAL_INCREASING.
+            return None
         trips = data["trips"]
         total_m = sum(trip.get("distance", 0) for trip in trips)
         return round(total_m / METERS_TO_KM, 2)
@@ -1323,6 +1325,12 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
+        # Base lifetime pas encore chargée (premier fetch différé au setup) :
+        # ne rien publier — une valeur basse temporaire (delta seul) serait
+        # enregistrée comme reset TOTAL_INCREASING dans les statistiques.
+        if not self.coordinator.data:
+            return None
+
         # Tant que l'offset n'a pas été restauré, ne pas publier de valeur
         # pour éviter un spike dans l'historique.
         # Exception : si offset_entity_id est None (pas d'offset configuré), on est prêt.
@@ -1340,6 +1348,10 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
+        # Même gating que native_value : pas d'attributs (ni de mutation du
+        # guard anti-régression) tant que la base lifetime n'est pas chargée.
+        if not self.coordinator.data:
+            return {}
         base_km, delta_km, last_lifetime_date = self._compute_tracker_km_guarded()
         offset_km = self._get_offset_km()
         offset_entity_id = self._offset_entity_id or "unknown"
