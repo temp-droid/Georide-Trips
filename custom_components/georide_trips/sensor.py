@@ -1310,7 +1310,7 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
         return (
             float(offset.state)
             if offset and offset.state not in (None, "unknown", "unavailable")
-            else 0
+            else 0.0
         )
 
     @property
