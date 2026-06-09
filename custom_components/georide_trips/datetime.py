@@ -14,6 +14,7 @@ Entités datetime rattachées au device de chaque moto :
 ── Plein en attente (usage interne) ──────────────────────────────
 - plein_pending_at : horodatage du plein en attente (epoch 1970 = pas de plein en attente)
 """
+
 import logging
 from datetime import datetime, timezone
 
@@ -28,6 +29,10 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+# Sentinel « pas de plein en attente » — convention partagée avec button.py
+# (_get_datetime traite l'année 1970 comme None, _set_datetime(None) écrit 1970).
+EPOCH_SENTINEL = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 DATETIME_DESCRIPTIONS = [
     {
@@ -53,6 +58,7 @@ DATETIME_DESCRIPTIONS = [
         "name": "Plein - Horodatage en attente",
         "icon": "mdi:clock-outline",
         "entity_category": EntityCategory.DIAGNOSTIC,
+        "default_epoch": True,
     },
 ]
 
@@ -95,8 +101,13 @@ class GeoRideDateTimeEntity(DateTimeEntity, RestoreEntity):
         self._attr_icon = desc["icon"]
         self._attr_entity_category = desc.get("entity_category")
 
-        # Valeur par défaut : maintenant (UTC)
-        self._attr_native_value: datetime = datetime.now(timezone.utc)
+        # Valeur par défaut : sentinel 1970 pour plein_pending_at (un défaut
+        # à now() simulerait un plein en attente dès l'installation → calcul
+        # de plein fantôme au premier verrouillage), sinon maintenant (UTC).
+        if desc.get("default_epoch"):
+            self._attr_native_value: datetime = EPOCH_SENTINEL
+        else:
+            self._attr_native_value: datetime = datetime.now(timezone.utc)
 
     @property
     def device_info(self) -> DeviceInfo:
