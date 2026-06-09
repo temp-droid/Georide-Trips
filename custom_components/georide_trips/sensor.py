@@ -1395,35 +1395,6 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
             "last_lifetime_sync": last_lifetime_date,
         }
 
-    def set_odometer(self, value: float):
-        """Set the odometer to a specific value by calculating offset."""
-        base_km, delta_km, _ = self._compute_tracker_km()
-        tracker_km = base_km + delta_km
-        offset_km = value - tracker_km
-        if not self._offset_entity_id:
-            _LOGGER.error(
-                "Cannot set odometer for %s: offset entity_id not resolved",
-                self.tracker_name,
-            )
-            return
-        self._hass.async_create_task(
-            self._hass.services.async_call(
-                "number",
-                "set_value",
-                {"entity_id": self._offset_entity_id, "value": offset_km},
-            )
-        )
-        # Mettre à jour le guard avec la nouvelle valeur tracker_km réelle
-        self._last_known_tracker_km = tracker_km
-        _LOGGER.info(
-            "Odometer set for %s: %.1f km (base=%.1f km, delta=%.1f km, offset=%.1f km)",
-            self.tracker_name,
-            value,
-            base_km,
-            delta_km,
-            offset_km,
-        )
-
 
 # ════════════════════════════════════════════════════════════════════════════
 # SENSOR — AUTONOMIE RESTANTE (réactif)

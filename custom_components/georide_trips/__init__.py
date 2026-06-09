@@ -7,7 +7,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import device_registry as dr
 import homeassistant.helpers.config_validation as cv
@@ -257,42 +257,94 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     else:
         _LOGGER.info("GeoRide Socket.IO disabled by option")
 
-    # Register service set_odometer
+    # Services odometer — implémentés via l'entity registry et le number
+    # odometer_offset uniquement (jamais via les objets entité internes de
+    # HA, qui ne sont pas une API supportée).
+    def _resolve_offset_entity(entity_id: str) -> str:
+        """Depuis l'entity_id du sensor real_odometer, retrouver le number offset.
+
+        Lève HomeAssistantError si l'entité n'est pas un odometer GeoRide
+        ou si le number odometer_offset est introuvable.
+        """
+        from homeassistant.helpers import entity_registry as er
+
+        from .helpers import resolve_entity_id
+
+        registry = er.async_get(hass)
+        reg_entry = registry.async_get(entity_id)
+        if (
+            reg_entry is None
+            or reg_entry.platform != DOMAIN
+            or not reg_entry.unique_id.endswith("_real_odometer")
+        ):
+            raise HomeAssistantError(
+                f"{entity_id} is not a GeoRide Trips real odometer sensor"
+            )
+        tracker_id = reg_entry.unique_id.removesuffix("_real_odometer")
+        offset_entity_id = resolve_entity_id(
+            hass, "number", tracker_id, "odometer_offset"
+        )
+        if offset_entity_id is None:
+            raise HomeAssistantError(
+                f"odometer_offset number not found for tracker {tracker_id}"
+            )
+        return offset_entity_id
+
     async def handle_set_odometer(call: ServiceCall):
-        """Handle set_odometer service."""
+        """Caler l'odometer affiché sur `value` en ajustant l'offset.
+
+        offset_nouveau = value - (état_affiché - offset_actuel)
+        """
         entity_id = call.data["entity_id"]
         value = call.data["value"]
+        offset_entity_id = _resolve_offset_entity(entity_id)
 
-        entity = hass.data["entity_components"]["sensor"].get_entity(entity_id)
-        if entity and hasattr(entity, "set_odometer"):
-            entity.set_odometer(value)
-        else:
-            _LOGGER.error(
-                "Entity %s not found or doesn't support set_odometer", entity_id
+        state = hass.states.get(entity_id)
+        if state is None or state.state in ("unknown", "unavailable"):
+            raise HomeAssistantError(
+                f"{entity_id} has no value yet (lifetime data still loading?) "
+                "— retry once the odometer shows a value"
             )
+        offset_state = hass.states.get(offset_entity_id)
+        current_offset = (
+            float(offset_state.state)
+            if offset_state
+            and offset_state.state not in (None, "unknown", "unavailable")
+            else 0.0
+        )
+        tracker_km = float(state.state) - current_offset
+        new_offset = round(value - tracker_km, 2)
+
+        await hass.services.async_call(
+            "number",
+            "set_value",
+            {"entity_id": offset_entity_id, "value": new_offset},
+            blocking=True,
+        )
+        _LOGGER.info(
+            "Odometer set for %s: %.1f km (offset %.1f → %.1f)",
+            entity_id,
+            value,
+            current_offset,
+            new_offset,
+        )
 
     hass.services.async_register(
         DOMAIN, SERVICE_SET_ODOMETER, handle_set_odometer, schema=SET_ODOMETER_SCHEMA
     )
 
-    # Register service reset_odometer
     async def handle_reset_odometer(call: ServiceCall):
-        """Handle reset_odometer service — set offset to 0."""
+        """Handle reset_odometer service — offset à 0, odometer = tracker_km seul."""
         entity_id = call.data["entity_id"]
+        offset_entity_id = _resolve_offset_entity(entity_id)
 
-        entity = hass.data["entity_components"]["sensor"].get_entity(entity_id)
-        if entity and hasattr(entity, "set_odometer"):
-            # Reset = set offset to 0, so odometer = tracker_km only
-            from .sensor import GeoRideRealOdometerSensor
-
-            if isinstance(entity, GeoRideRealOdometerSensor):
-                base_km, delta_km, _ = entity._compute_tracker_km()
-                entity.set_odometer(base_km + delta_km)
-                _LOGGER.info("Odometer reset for %s (offset → 0)", entity_id)
-            else:
-                _LOGGER.error("Entity %s is not a GeoRideRealOdometerSensor", entity_id)
-        else:
-            _LOGGER.error("Entity %s not found or doesn't support reset", entity_id)
+        await hass.services.async_call(
+            "number",
+            "set_value",
+            {"entity_id": offset_entity_id, "value": 0.0},
+            blocking=True,
+        )
+        _LOGGER.info("Odometer reset for %s (offset → 0)", entity_id)
 
     hass.services.async_register(
         DOMAIN,
