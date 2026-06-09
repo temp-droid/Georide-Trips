@@ -1,10 +1,12 @@
 """GeoRide Trips integration."""
+
 import logging
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import device_registry as dr
 import homeassistant.helpers.config_validation as cv
@@ -22,7 +24,7 @@ from .const import (
     DEFAULT_SOCKETIO_ENABLED,
     DEFAULT_TRACKER_SCAN_INTERVAL,
 )
-from .api import GeoRideTripsAPI
+from .api import GeoRideApiError, GeoRideAuthError, GeoRideTripsAPI
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,35 +75,50 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Read options
     scan_interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
-    lifetime_scan_interval = entry.options.get(CONF_LIFETIME_SCAN_INTERVAL, DEFAULT_LIFETIME_SCAN_INTERVAL)
+    lifetime_scan_interval = entry.options.get(
+        CONF_LIFETIME_SCAN_INTERVAL, DEFAULT_LIFETIME_SCAN_INTERVAL
+    )
     trips_days_back = entry.options.get(CONF_TRIPS_DAYS_BACK, DEFAULT_TRIPS_DAYS_BACK)
-    socketio_enabled = entry.options.get(CONF_SOCKETIO_ENABLED, DEFAULT_SOCKETIO_ENABLED)
-    tracker_scan_interval = entry.options.get(CONF_TRACKER_SCAN_INTERVAL, DEFAULT_TRACKER_SCAN_INTERVAL)
+    socketio_enabled = entry.options.get(
+        CONF_SOCKETIO_ENABLED, DEFAULT_SOCKETIO_ENABLED
+    )
+    tracker_scan_interval = entry.options.get(
+        CONF_TRACKER_SCAN_INTERVAL, DEFAULT_TRACKER_SCAN_INTERVAL
+    )
 
     _LOGGER.info(
         "Options: scan_interval=%ss, lifetime=%ss, days_back=%s, socketio=%s, tracker_scan=%ss",
-        scan_interval, lifetime_scan_interval, trips_days_back, socketio_enabled, tracker_scan_interval,
+        scan_interval,
+        lifetime_scan_interval,
+        trips_days_back,
+        socketio_enabled,
+        tracker_scan_interval,
     )
 
     # Create API client
     session = async_get_clientsession(hass)
-    api = GeoRideTripsAPI(
-        entry.data[CONF_EMAIL],
-        entry.data[CONF_PASSWORD],
-        session
-    )
+    api = GeoRideTripsAPI(entry.data[CONF_EMAIL], entry.data[CONF_PASSWORD], session)
 
-    # Login
-    if not await api.login():
-        _LOGGER.error("Failed to login to GeoRide API")
+    # Login + liste des trackers.
+    # Auth refusée → échec définitif (mauvais identifiants, pas de retry).
+    # Erreur transport/API → ConfigEntryNotReady pour que HA retente plus tard.
+    try:
+        await api.login()
+        trackers = await api.get_trackers()
+    except GeoRideAuthError as err:
+        _LOGGER.error("Failed to login to GeoRide API: %s", err)
         return False
+    except GeoRideApiError as err:
+        raise ConfigEntryNotReady(f"GeoRide API unavailable: {err}") from err
 
-    # Get trackers
-    trackers = await api.get_trackers()
     _LOGGER.info("Found %d GeoRide trackers", len(trackers))
 
     # Create coordinators
-    from .sensor import GeoRideTripsCoordinator, GeoRideLifetimeTripsCoordinator, GeoRideTrackerStatusCoordinator
+    from .sensor import (
+        GeoRideTripsCoordinator,
+        GeoRideLifetimeTripsCoordinator,
+        GeoRideTrackerStatusCoordinator,
+    )
 
     coordinators = {}
     lifetime_coordinators = {}
@@ -112,18 +129,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         tracker_name = tracker.get("trackerName", f"Tracker {tracker_id}")
 
         coordinator = GeoRideTripsCoordinator(
-            hass, api, tracker_id, tracker_name,
-            scan_interval, trips_days_back,
+            hass,
+            api,
+            tracker_id,
+            tracker_name,
+            scan_interval,
+            trips_days_back,
         )
 
         lifetime_coordinator = GeoRideLifetimeTripsCoordinator(
-            hass, api, tracker_id, tracker_name,
+            hass,
+            api,
+            tracker_id,
+            tracker_name,
             tracker.get("activationDate"),
             lifetime_scan_interval,
         )
 
         status_coordinator = GeoRideTrackerStatusCoordinator(
-            hass, api, tracker_id, tracker_name,
+            hass,
+            api,
+            tracker_id,
+            tracker_name,
             scan_interval=tracker_scan_interval,
         )
 
@@ -142,13 +169,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinators[tracker_id].attach_status_coordinator(
             tracker_status_coordinators[tracker_id]
         )
-    _LOGGER.info("TripsCoordinators attached to StatusCoordinator (lock detection active)")
+    _LOGGER.info(
+        "TripsCoordinators attached to StatusCoordinator (lock detection active)"
+    )
 
     # Créer le socket_manager AVANT le setup des plateformes
     # pour que les entités puissent s'y abonner dans async_added_to_hass
     socket_manager = None
     if socketio_enabled:
         from .socket_manager import GeoRideSocketManager
+
         tracker_ids = [str(t.get("trackerId")) for t in trackers]
         socket_manager = GeoRideSocketManager(hass, api, tracker_ids)
         _LOGGER.info("GeoRide Socket.IO manager created (will start after platforms)")
@@ -201,9 +231,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if entity and hasattr(entity, "set_odometer"):
             entity.set_odometer(value)
         else:
-            _LOGGER.error("Entity %s not found or doesn't support set_odometer", entity_id)
+            _LOGGER.error(
+                "Entity %s not found or doesn't support set_odometer", entity_id
+            )
 
-    hass.services.async_register(DOMAIN, SERVICE_SET_ODOMETER, handle_set_odometer, schema=SET_ODOMETER_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_ODOMETER, handle_set_odometer, schema=SET_ODOMETER_SCHEMA
+    )
 
     # Register service reset_odometer
     async def handle_reset_odometer(call: ServiceCall):
@@ -214,6 +248,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if entity and hasattr(entity, "set_odometer"):
             # Reset = set offset to 0, so odometer = tracker_km only
             from .sensor import GeoRideRealOdometerSensor
+
             if isinstance(entity, GeoRideRealOdometerSensor):
                 base_km, delta_km, _ = entity._compute_tracker_km()
                 entity.set_odometer(base_km + delta_km)
@@ -223,13 +258,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         else:
             _LOGGER.error("Entity %s not found or doesn't support reset", entity_id)
 
-    hass.services.async_register(DOMAIN, SERVICE_RESET_ODOMETER, handle_reset_odometer, schema=RESET_ODOMETER_SCHEMA)
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RESET_ODOMETER,
+        handle_reset_odometer,
+        schema=RESET_ODOMETER_SCHEMA,
+    )
 
     # Register service get_trips (supports_response => résultat visible dans Developer Tools)
     async def handle_get_trips(call: ServiceCall):
         """Handle get_trips service call."""
         from datetime import datetime as dt
         from homeassistant.core import SupportsResponse  # noqa: F401 (used below)
+
         tracker_id = call.data["tracker_id"]
         from_date_str = call.data.get("from_date")
         to_date_str = call.data.get("to_date")
@@ -241,14 +282,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             try:
                 from_date = dt.fromisoformat(from_date_str)
             except ValueError:
-                _LOGGER.error("Invalid from_date format: %s (expected ISO 8601)", from_date_str)
+                _LOGGER.error(
+                    "Invalid from_date format: %s (expected ISO 8601)", from_date_str
+                )
                 return {"error": f"Invalid from_date format: {from_date_str}"}
 
         if to_date_str:
             try:
                 to_date = dt.fromisoformat(to_date_str)
             except ValueError:
-                _LOGGER.error("Invalid to_date format: %s (expected ISO 8601)", to_date_str)
+                _LOGGER.error(
+                    "Invalid to_date format: %s (expected ISO 8601)", to_date_str
+                )
                 return {"error": f"Invalid to_date format: {to_date_str}"}
 
         # Find API instance for this entry
@@ -262,11 +307,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error("GeoRide API not found for get_trips service")
             return {"error": "GeoRide API not found"}
 
-        trips = await api_instance.get_trips(tracker_id, from_date, to_date)
+        try:
+            trips = await api_instance.get_trips(tracker_id, from_date, to_date)
+        except GeoRideApiError as err:
+            _LOGGER.error("get_trips service failed: %s", err)
+            return {"error": str(err)}
 
         _LOGGER.info(
             "get_trips: tracker=%s from=%s to=%s => %d trips found",
-            tracker_id, from_date_str, to_date_str, len(trips),
+            tracker_id,
+            from_date_str,
+            to_date_str,
+            len(trips),
         )
 
         result = {
@@ -284,6 +336,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return result
 
     from homeassistant.core import SupportsResponse
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_GET_TRIPS,

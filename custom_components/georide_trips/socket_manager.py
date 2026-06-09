@@ -34,6 +34,7 @@ import asyncio
 import logging
 from typing import Callable, Dict, Any, Optional
 
+from .api import GeoRideApiError
 from .const import SOCKETIO_URL
 
 _LOGGER = logging.getLogger(__name__)
@@ -90,7 +91,9 @@ class GeoRideSocketManager:
         """
         self._callbacks.setdefault(tracker_id, {}).setdefault(event_name, [])
         self._callbacks[tracker_id][event_name].append(callback)
-        _LOGGER.debug("Callback registered: tracker=%s event=%s", tracker_id, event_name)
+        _LOGGER.debug(
+            "Callback registered: tracker=%s event=%s", tracker_id, event_name
+        )
 
         def unregister():
             try:
@@ -109,7 +112,9 @@ class GeoRideSocketManager:
         """Démarrer la connexion Socket.IO (appelé depuis async_setup_entry)."""
         self._should_run = True
         self._reconnect_task = self._hass.loop.create_task(self._run_loop())
-        _LOGGER.info("GeoRide SocketManager started for %d trackers", len(self._tracker_ids))
+        _LOGGER.info(
+            "GeoRide SocketManager started for %d trackers", len(self._tracker_ids)
+        )
 
     async def stop(self) -> None:
         """Arrêter proprement la connexion (appelé depuis async_unload_entry)."""
@@ -171,8 +176,12 @@ class GeoRideSocketManager:
 
         # S'assurer qu'on a un token valide
         if not self._api.token:
-            if not await self._api.login():
-                _LOGGER.error("Cannot connect Socket.IO: authentication failed")
+            try:
+                await self._api.login()
+            except GeoRideApiError as err:
+                _LOGGER.error(
+                    "Cannot connect Socket.IO: authentication failed: %s", err
+                )
                 return
 
         self._sio = socketio.AsyncClient(
@@ -229,7 +238,8 @@ class GeoRideSocketManager:
                     "device_id": str(data.get("trackerId", "")),
                     # GeoRide envoie le type dans 'name', fallback sur 'type'
                     "type": data.get("name") or data.get("type", ""),
-                    "device_name": data.get("trackerName") or data.get("device_name", ""),
+                    "device_name": data.get("trackerName")
+                    or data.get("device_name", ""),
                 },
             )
 
@@ -296,13 +306,11 @@ class GeoRideSocketManager:
             _LOGGER.debug("Socket.IO event '%s' without trackerId, ignored", event_name)
             return
 
-        _LOGGER.debug("Socket.IO event '%s' for tracker %s: %s", event_name, tracker_id, data)
-
-        callbacks = (
-            self._callbacks
-            .get(tracker_id, {})
-            .get(event_name, [])
+        _LOGGER.debug(
+            "Socket.IO event '%s' for tracker %s: %s", event_name, tracker_id, data
         )
+
+        callbacks = self._callbacks.get(tracker_id, {}).get(event_name, [])
 
         for cb in list(callbacks):  # copie pour éviter modification pendant itération
             try:
@@ -313,5 +321,7 @@ class GeoRideSocketManager:
             except Exception as err:
                 _LOGGER.error(
                     "Error in callback for event '%s' tracker %s: %s",
-                    event_name, tracker_id, err,
+                    event_name,
+                    tracker_id,
+                    err,
                 )

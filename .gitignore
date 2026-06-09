@@ -11,3 +11,5 @@
 !blueprints/automation/
 !blueprints/automation/GeorideTrip/
 !blueprints/automation/GeorideTrip/**
+__pycache__/
+*.pyc

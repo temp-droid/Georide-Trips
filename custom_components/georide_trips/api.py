@@ -1,10 +1,23 @@
 """GeoRide API Client."""
+
 import logging
 import aiohttp
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class GeoRideApiError(Exception):
+    """Transport or HTTP error while talking to the GeoRide API.
+
+    Raised instead of returning an empty result so callers (coordinators)
+    can distinguish "fetch failed" from "no data" and keep previous data.
+    """
+
+
+class GeoRideAuthError(GeoRideApiError):
+    """Authentication failed (bad credentials or unrecoverable 401)."""
 
 
 class GeoRideTripsAPI:
@@ -19,13 +32,14 @@ class GeoRideTripsAPI:
         self.token = None
 
     async def login(self) -> bool:
-        """Login to GeoRide API."""
+        """Login to GeoRide API.
+
+        Raises GeoRideAuthError on rejected credentials, GeoRideApiError on
+        any other HTTP/transport failure. Returns True on success.
+        """
         url = f"{self.base_url}/user/login"
-        data = {
-            "email": self.email,
-            "password": self.password
-        }
-        
+        data = {"email": self.email, "password": self.password}
+
         try:
             async with self.session.post(url, data=data) as response:
                 if response.status == 200:
@@ -33,46 +47,78 @@ class GeoRideTripsAPI:
                     self.token = result.get("authToken")
                     _LOGGER.debug("Successfully logged in to GeoRide API")
                     return True
-                else:
-                    _LOGGER.error("Failed to login: %s", response.status)
-                    return False
+                if response.status in (401, 403):
+                    raise GeoRideAuthError(f"Login rejected: HTTP {response.status}")
+                raise GeoRideApiError(f"Login failed: HTTP {response.status}")
+        except GeoRideApiError:
+            raise
         except Exception as err:
-            _LOGGER.error("Error during login: %s", err)
-            return False
+            raise GeoRideApiError(f"Error during login: {err}") from err
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        params: Optional[Dict[str, Any]] = None,
+        json: Optional[Dict[str, Any]] = None,
+        _retry: bool = True,
+    ) -> Any:
+        """Perform an authenticated request and return the parsed JSON body.
+
+        Comportement uniforme pour tous les endpoints :
+        - login automatique si aucun token,
+        - retry unique sur 401 après ré-authentification,
+        - GeoRideApiError sur erreur HTTP/transport (jamais de [] silencieux),
+        - GeoRideAuthError si le 401 persiste après re-login.
+        """
+        if not self.token:
+            await self.login()
+
+        url = f"{self.base_url}{path}"
+        headers = {"Authorization": f"Bearer {self.token}"}
+
+        try:
+            async with self.session.request(
+                method, url, headers=headers, params=params, json=json
+            ) as response:
+                if response.status == 204:
+                    return None
+                if response.status == 200:
+                    try:
+                        return await response.json()
+                    except (aiohttp.ContentTypeError, ValueError):
+                        # Certains endpoints d'action renvoient un corps vide
+                        return None
+                if response.status == 401:
+                    if _retry:
+                        _LOGGER.warning("Token expired, re-authenticating...")
+                        await self.login()
+                        return await self._request(
+                            method, path, params=params, json=json, _retry=False
+                        )
+                    raise GeoRideAuthError(
+                        f"{method} {path}: still unauthorized after re-login"
+                    )
+                text = await response.text()
+                raise GeoRideApiError(
+                    f"{method} {path}: HTTP {response.status} {text[:200]}"
+                )
+        except GeoRideApiError:
+            raise
+        except Exception as err:
+            raise GeoRideApiError(f"{method} {path}: {err}") from err
 
     async def get_trackers(self) -> List[Dict[str, Any]]:
         """Get list of trackers."""
-        if not self.token:
-            await self.login()
-        
-        url = f"{self.base_url}/user/trackers"
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
-        }
-        
-        try:
-            async with self.session.get(url, headers=headers) as response:
-                if response.status == 200:
-                    return await response.json()
-                else:
-                    _LOGGER.error("Failed to get trackers: %s", response.status)
-                    return []
-        except Exception as err:
-            _LOGGER.error("Error getting trackers: %s", err)
-            return []
+        return await self._request("GET", "/user/trackers") or []
 
     async def get_trips(
         self,
         tracker_id: str,
         from_date: Optional[datetime] = None,
         to_date: Optional[datetime] = None,
-        _retry: bool = True,
     ) -> List[Dict[str, Any]]:
         """Get trips for a tracker."""
-        if not self.token:
-            await self.login()
-
         # Default to last 30 days
         if from_date is None:
             from_date = datetime.now(timezone.utc) - timedelta(days=30)
@@ -85,38 +131,17 @@ class GeoRideTripsAPI:
         if to_date.tzinfo is not None:
             to_date = to_date.astimezone(timezone.utc).replace(tzinfo=None)
 
-        from_str = from_date.strftime("%Y%m%dT%H%M%S")
-        to_str = to_date.strftime("%Y%m%dT%H%M%S")
-
-        url = f"{self.base_url}/tracker/{tracker_id}/trips"
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
-        }
         params = {
-            "from": from_str,
-            "to": to_str
+            "from": from_date.strftime("%Y%m%dT%H%M%S"),
+            "to": to_date.strftime("%Y%m%dT%H%M%S"),
         }
 
-        try:
-            async with self.session.get(url, headers=headers, params=params) as response:
-                if response.status == 200:
-                    trips = await response.json()
-                    _LOGGER.debug("Retrieved %d trips for tracker %s", len(trips), tracker_id)
-                    return trips
-                elif response.status == 401 and _retry:
-                    # Token expired, retry once with new login
-                    _LOGGER.warning("Token expired, re-authenticating...")
-                    if not await self.login():
-                        _LOGGER.error("Re-authentication failed, cannot fetch trips")
-                        return []
-                    return await self.get_trips(tracker_id, from_date, to_date, _retry=False)
-                else:
-                    _LOGGER.error("Failed to get trips: %s", response.status)
-                    return []
-        except Exception as err:
-            _LOGGER.error("Error getting trips: %s", err)
-            return []
+        trips = (
+            await self._request("GET", f"/tracker/{tracker_id}/trips", params=params)
+            or []
+        )
+        _LOGGER.debug("Retrieved %d trips for tracker %s", len(trips), tracker_id)
+        return trips
 
     async def get_last_position(self, tracker_id: str) -> Optional[Dict[str, Any]]:
         """Get last known position via the last trip's positions endpoint.
@@ -124,9 +149,6 @@ class GeoRideTripsAPI:
         L'API GeoRide n'expose pas d'endpoint /positions/last.
         On récupère les trips des dernières 24h et on prend la dernière position du dernier trip.
         """
-        if not self.token:
-            await self.login()
-
         # Récupérer les trips récents (24h)
         from_date = datetime.now(timezone.utc) - timedelta(hours=24)
         to_date = datetime.now(timezone.utc)
@@ -138,11 +160,15 @@ class GeoRideTripsAPI:
             trips = await self.get_trips(tracker_id, from_date, to_date)
 
         if not trips:
-            _LOGGER.debug("No recent trips for tracker %s, cannot get last position", tracker_id)
+            _LOGGER.debug(
+                "No recent trips for tracker %s, cannot get last position", tracker_id
+            )
             return None
 
         # Prendre le trip le plus récent
-        last_trip = sorted(trips, key=lambda t: t.get("endDate", t.get("startDate", "")))[-1]
+        last_trip = sorted(
+            trips, key=lambda t: t.get("endDate", t.get("startDate", ""))
+        )[-1]
         trip_start = last_trip.get("startDate") or last_trip.get("startTime")
         trip_end = last_trip.get("endDate") or last_trip.get("endTime")
 
@@ -151,7 +177,9 @@ class GeoRideTripsAPI:
             return None
 
         # Récupérer les positions de ce trip
-        positions = await self.get_trip_positions_by_date(tracker_id, trip_start, trip_end)
+        positions = await self.get_trip_positions_by_date(
+            tracker_id, trip_start, trip_end
+        )
 
         if not positions:
             return None
@@ -166,168 +194,73 @@ class GeoRideTripsAPI:
         tracker_id: str,
         from_date: str,
         to_date: str,
-        _retry: bool = True,
     ) -> List[Dict[str, Any]]:
         """Get positions for a trip by date range (ISO 8601 strings)."""
-        if not self.token:
-            await self.login()
-
-        url = f"{self.base_url}/tracker/{tracker_id}/trips/positions"
-        headers = {"Authorization": f"Bearer {self.token}"}
-        params = {"from": from_date, "to": to_date}
-
-        try:
-            async with self.session.get(url, headers=headers, params=params) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    # L'API retourne {"positions": [...]} ou directement [...]
-                    if isinstance(data, dict):
-                        return data.get("positions", [])
-                    return data
-                elif response.status == 401 and _retry:
-                    _LOGGER.warning("Token expired, re-authenticating...")
-                    if not await self.login():
-                        _LOGGER.error("Re-authentication failed, cannot fetch positions")
-                        return []
-                    return await self.get_trip_positions_by_date(tracker_id, from_date, to_date, _retry=False)
-                else:
-                    _LOGGER.error("Failed to get trip positions: %s", response.status)
-                    return []
-        except Exception as err:
-            _LOGGER.error("Error getting trip positions: %s", err)
-            return []
+        data = await self._request(
+            "GET",
+            f"/tracker/{tracker_id}/trips/positions",
+            params={"from": from_date, "to": to_date},
+        )
+        # L'API retourne {"positions": [...]} ou directement [...]
+        if isinstance(data, dict):
+            return data.get("positions", [])
+        return data or []
 
     async def get_trip_positions(
-        self,
-        tracker_id: str,
-        trip_id: str
+        self, tracker_id: str, trip_id: str
     ) -> List[Dict[str, Any]]:
         """Get positions for a specific trip."""
-        if not self.token:
-            await self.login()
+        return (
+            await self._request(
+                "GET", f"/tracker/{tracker_id}/trip/{trip_id}/positions"
+            )
+            or []
+        )
 
-        url = f"{self.base_url}/tracker/{tracker_id}/trip/{trip_id}/positions"
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
-        }
-
-        try:
-            async with self.session.get(url, headers=headers) as response:
-                if response.status == 200:
-                    return await response.json()
-                else:
-                    _LOGGER.error("Failed to get trip positions: %s", response.status)
-                    return []
-        except Exception as err:
-            _LOGGER.error("Error getting trip positions: %s", err)
-            return []
-
-    async def set_eco_mode(self, tracker_id: str, enabled: bool, _retry: bool = True) -> bool:
+    async def set_eco_mode(self, tracker_id: str, enabled: bool) -> bool:
         """Enable or disable eco mode for a tracker.
 
         Endpoint: PUT /tracker/{tracker_id}/eco
         Body: {"isInEco": true/false}
         """
-        if not self.token:
-            await self.login()
-
-        url = f"{self.base_url}/tracker/{tracker_id}/eco"
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json",
-        }
-        body = {"isInEco": enabled}
-
         try:
-            async with self.session.put(url, headers=headers, json=body) as response:
-                if response.status in (200, 204):
-                    _LOGGER.info(
-                        "Eco mode %s for tracker %s",
-                        "enabled" if enabled else "disabled",
-                        tracker_id,
-                    )
-                    return True
-                elif response.status == 401 and _retry:
-                    _LOGGER.warning("Token expired, re-authenticating...")
-                    if await self.login():
-                        return await self.set_eco_mode(tracker_id, enabled, _retry=False)
-                    return False
-                else:
-                    text = await response.text()
-                    _LOGGER.error(
-                        "Failed to set eco mode: status=%s body=%s",
-                        response.status, text,
-                    )
-                    return False
-        except Exception as err:
-            _LOGGER.error("Error setting eco mode: %s", err)
+            await self._request(
+                "PUT", f"/tracker/{tracker_id}/eco", json={"isInEco": enabled}
+            )
+        except GeoRideApiError as err:
+            _LOGGER.error("Failed to set eco mode for tracker %s: %s", tracker_id, err)
             return False
+        _LOGGER.info(
+            "Eco mode %s for tracker %s",
+            "enabled" if enabled else "disabled",
+            tracker_id,
+        )
+        return True
 
-    async def sonor_alarm_off(self, tracker_id: str, _retry: bool = True) -> bool:
+    async def sonor_alarm_off(self, tracker_id: str) -> bool:
         """Arrêter l'alarme sonore du tracker (GeoRide 3 uniquement).
 
         Endpoint: POST /tracker/{tracker_id}/sonor-alarm/off
         """
-        if not self.token:
-            await self.login()
-
-        url = f"{self.base_url}/tracker/{tracker_id}/sonor-alarm/off"
-        headers = {"Authorization": f"Bearer {self.token}"}
-
         try:
-            async with self.session.post(url, headers=headers) as response:
-                if response.status in (200, 204):
-                    _LOGGER.info("Sonor alarm OFF for tracker %s", tracker_id)
-                    return True
-                elif response.status == 401 and _retry:
-                    if await self.login():
-                        return await self.sonor_alarm_off(tracker_id, _retry=False)
-                    return False
-                else:
-                    text = await response.text()
-                    _LOGGER.error("Failed sonor alarm off: status=%s body=%s", response.status, text)
-                    return False
-        except Exception as err:
-            _LOGGER.error("Error sonor alarm off: %s", err)
+            await self._request("POST", f"/tracker/{tracker_id}/sonor-alarm/off")
+        except GeoRideApiError as err:
+            _LOGGER.error("Failed sonor alarm off for tracker %s: %s", tracker_id, err)
             return False
+        _LOGGER.info("Sonor alarm OFF for tracker %s", tracker_id)
+        return True
 
-    async def toggle_lock(self, tracker_id: str, _retry: bool = True) -> bool | None:
+    async def toggle_lock(self, tracker_id: str) -> bool | None:
         """Toggle the lock state of a tracker.
 
         Endpoint: POST /tracker/{tracker_id}/toggleLock
         Returns the new locked state (True/False), or None on error.
         """
-        if not self.token:
-            await self.login()
-
-        url = f"{self.base_url}/tracker/{tracker_id}/toggleLock"
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-        }
-
         try:
-            async with self.session.post(url, headers=headers) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    locked = result.get("locked")
-                    _LOGGER.info(
-                        "Tracker %s lock toggled -> locked=%s",
-                        tracker_id, locked,
-                    )
-                    return locked
-                elif response.status == 401 and _retry:
-                    _LOGGER.warning("Token expired, re-authenticating...")
-                    if await self.login():
-                        return await self.toggle_lock(tracker_id, _retry=False)
-                    return None
-                else:
-                    text = await response.text()
-                    _LOGGER.error(
-                        "Failed to toggle lock: status=%s body=%s",
-                        response.status, text,
-                    )
-                    return None
-        except Exception as err:
-            _LOGGER.error("Error toggling lock: %s", err)
+            result = await self._request("POST", f"/tracker/{tracker_id}/toggleLock")
+        except GeoRideApiError as err:
+            _LOGGER.error("Failed to toggle lock for tracker %s: %s", tracker_id, err)
             return None
+        locked = (result or {}).get("locked")
+        _LOGGER.info("Tracker %s lock toggled -> locked=%s", tracker_id, locked)
+        return locked
