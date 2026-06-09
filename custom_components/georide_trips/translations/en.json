@@ -16,7 +16,8 @@
       "unknown": "Unknown error"
     },
     "abort": {
-      "already_configured": "This GeoRide account is already configured"
+      "already_configured": "This GeoRide account is already configured",
+      "single_instance_allowed": "Only a single GeoRide Trips instance is supported"
     }
   },
   "options": {

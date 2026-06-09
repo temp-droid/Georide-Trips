@@ -79,6 +79,9 @@ Un `GeoRideMidnightSnapshotManager` natif Python met à jour automatiquement les
 3. Saisir l'email et le mot de passe du compte GeoRide
 4. L'intégration crée automatiquement un **appareil par tracker** détecté sur le compte
 
+> **Limitation** : une seule instance (un seul compte GeoRide) est supportée.
+> Plusieurs trackers sur le même compte fonctionnent normalement.
+
 #### Options avancées (configurables après installation)
 
 | Option | Défaut | Description |

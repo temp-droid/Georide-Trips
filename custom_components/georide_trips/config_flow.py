@@ -59,6 +59,11 @@ class GeoRideTripsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
+        # Une seule instance supportée : les unique_id d'entités ne sont pas
+        # préfixés par config entry (limitation single-account assumée).
+        if self._async_current_entries():
+            return self.async_abort(reason="single_instance_allowed")
+
         errors = {}
 
         if user_input is not None:
