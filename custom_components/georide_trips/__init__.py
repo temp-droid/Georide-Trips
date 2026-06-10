@@ -119,7 +119,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info("Found %d GeoRide trackers", len(trackers))
 
     # Create coordinators
-    from .sensor import (
+    from .coordinator import (
         GeoRideTripsCoordinator,
         GeoRideLifetimeTripsCoordinator,
         GeoRideTrackerStatusCoordinator,
