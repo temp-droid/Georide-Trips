@@ -45,6 +45,7 @@ number entities attached to each motorcycle's device:
 - odometer_offset               : mileage offset (km already on the tracker)
 """
 
+import asyncio
 import logging
 
 from homeassistant.components.number import NumberEntity, NumberMode
@@ -411,8 +412,12 @@ async def async_setup_entry(
 
     # Store shared by all number entities of this config entry.
     # Written to disk immediately on each set_value → survives restarts.
+    # stored_data is the single in-memory state; saves are serialized by
+    # store_lock so concurrent writers (refuel button, midnight snapshots)
+    # cannot clobber each other's keys.
     store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}_{entry.entry_id}")
     stored_data: dict = await store.async_load() or {}
+    store_lock = asyncio.Lock()
 
     profile = DRIVETRAIN_PROFILES.get(
         entry.options.get(CONF_DRIVE_TYPE, DEFAULT_DRIVE_TYPE),
@@ -425,7 +430,9 @@ async def async_setup_entry(
         for desc in NUMBER_DESCRIPTIONS:
             desc = overrides.get(desc["key"], desc)
             entities.append(
-                GeoRideNumberEntity(entry, tracker, desc, store, stored_data)
+                GeoRideNumberEntity(
+                    entry, tracker, desc, store, stored_data, store_lock
+                )
             )
 
     async_add_entities(entities)
@@ -451,11 +458,14 @@ class GeoRideNumberEntity(GeoRideEntityMixin, NumberEntity):
         desc: dict,
         store: Store,
         stored_data: dict,
+        store_lock: asyncio.Lock,
     ) -> None:
         self._entry = entry
         self._tracker = tracker
         self._desc = desc
         self._store = store
+        self._stored_data = stored_data
+        self._store_lock = store_lock
 
         self._tracker_id = str(tracker.get("trackerId"))
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
@@ -494,11 +504,15 @@ class GeoRideNumberEntity(GeoRideEntityMixin, NumberEntity):
         _LOGGER.debug("Set %s for %s: %s", self._desc["key"], self._tracker_name, value)
 
     async def _persist(self, value: float) -> None:
-        """Write the value to the Store (disk) immediately."""
+        """Write the value to the Store (disk) immediately.
+
+        Mutates the shared in-memory dict and saves it under the entry-wide
+        lock — no disk reload, no lost-update between concurrent writers.
+        """
         try:
-            current: dict = await self._store.async_load() or {}
-            current[self._storage_key] = value
-            await self._store.async_save(current)
+            async with self._store_lock:
+                self._stored_data[self._storage_key] = value
+                await self._store.async_save(self._stored_data)
         except Exception as err:
             _LOGGER.error(
                 "Failed to persist %s for %s: %s",
