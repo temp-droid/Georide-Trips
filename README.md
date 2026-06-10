@@ -26,6 +26,7 @@ Complete Home Assistant integration for **GeoRide** GPS trackers, providing moto
 | 📡 **Real time** | Socket.IO connection for instant updates (movement, alarms) |
 | 🌿 **Eco mode** | Enable/disable the tracker's eco mode from HA |
 | 🔒 **Locking** | Lock/unlock the tracker remotely from HA |
+| 🔑 **Reauth** | If the GeoRide password changes, HA prompts you to re-enter it instead of silently failing |
 
 ---
 
@@ -314,7 +315,7 @@ The offset is configurable directly from the HA interface via `number.*_odometer
 - Home Assistant 2024.6 or higher
 - A GeoRide account with at least one active tracker
 - **Home Assistant Companion** app (for push notifications)
-- Python 3.11+
+- Python 3.12+
 
 ### Python dependencies (installed automatically)
 
@@ -360,6 +361,15 @@ Make sure the folder is named exactly `georide_trips` and fully restart Home Ass
 
 **GPS positions are inaccurate**
 Configure the GPS filter in the options (`Minimum GPS accuracy`) to ignore positions whose accuracy radius exceeds the defined threshold (e.g. 50 m).
+
+**The integration stopped working after a GeoRide password change**
+Home Assistant raises a re-authentication notification — open **Settings → Devices & services** and enter the new password in the GeoRide Trips reauth prompt. No need to delete and re-add the integration.
+
+**The "Last alarm" sensor shows `Unknown`**
+Expected until an alarm fires while the integration is running — it is fed by live Socket.IO events and does not backfill alarms received before installation. It populates (and persists) on the next theft/fall/vibration/power-cut event.
+
+**The integration icon shows "icon not available"**
+Local brand images live in `custom_components/georide_trips/brand/`. Home Assistant only scans that folder at startup, so a full restart is required after first adding it (a config reload or browser refresh is not enough).
 
 ---
 
