@@ -116,11 +116,20 @@ class _GeoRideEntretienKmBase(GeoRideEntityMixin, SensorEntity, RestoreEntity):
                 self._handle_state_change,
             )
         )
-        # No _recalculate() here — we wait for the first state_change_event
-        # to avoid spurious values before the numbers are restored
+        # Recompute once HA has fully started — by then the interval and
+        # km-at-last-service numbers have restored — so a restart doesn't leave a
+        # stale restored value until the next state-change event.
+        from homeassistant.helpers.start import async_at_started
+
+        self.async_on_remove(async_at_started(self._hass, self._handle_started))
 
     @callback
     def _handle_state_change(self, event) -> None:
+        self._recalculate()
+        self.async_write_ha_state()
+
+    @callback
+    def _handle_started(self, _hass) -> None:
         self._recalculate()
         self.async_write_ha_state()
 
@@ -280,10 +289,20 @@ class GeoRideJoursRestantsRevisionSensor(
                 second=0,
             )
         )
-        # No _recalculate() here — we wait for the first state_change_event
+        # Recompute once HA has fully started — by then the last-service date and
+        # day-interval have restored — so a restart doesn't leave a stale restored
+        # value (e.g. 0) tripping a false "due" until midnight.
+        from homeassistant.helpers.start import async_at_started
+
+        self.async_on_remove(async_at_started(self._hass, self._handle_started))
 
     @callback
     def _handle_state_change(self, event) -> None:
+        self._recalculate()
+        self.async_write_ha_state()
+
+    @callback
+    def _handle_started(self, _hass) -> None:
         self._recalculate()
         self.async_write_ha_state()
 
