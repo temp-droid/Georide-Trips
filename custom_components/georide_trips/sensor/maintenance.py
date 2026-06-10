@@ -157,57 +157,33 @@ class _GeoRideEntretienKmBase(GeoRideEntityMixin, SensorEntity, RestoreEntity):
         }
 
 
-class GeoRideKmRestantsDrivetrainSensor(_GeoRideEntretienKmBase):
-    """Sensor for km remaining before drivetrain maintenance (chain/shaft/belt)."""
+# Descriptions for the fixed maintenance km sensors.
+# Each tuple: (unique_id_suffix, name_suffix, icon, intervalle_key, km_dernier_key)
+MAINTENANCE_KM_DESCRIPTIONS = [
+    (
+        "oil_change_remaining_km",
+        "Oil change – remaining km",
+        "mdi:oil",
+        "oil_change_km_interval",
+        "oil_change_km_at_last_oil_change",
+    ),
+    (
+        "service_remaining_km",
+        "Service – remaining km",
+        "mdi:wrench",
+        "service_km_interval",
+        "service_km_at_last_service",
+    ),
+]
 
-    def __init__(
-        self, entry, tracker, hass, odometer_sensor, label="Drivetrain"
-    ) -> None:
-        super().__init__(
-            entry=entry,
-            tracker=tracker,
-            hass=hass,
-            odometer_sensor=odometer_sensor,
-            unique_id_suffix="drivetrain_remaining_km",
-            name_suffix=f"{label} – remaining km",
-            icon="mdi:link-variant",
-            intervalle_key="drivetrain_km_interval",
-            km_dernier_key="drivetrain_km_at_last_service",
-        )
-
-
-class GeoRideKmRestantsVidangeSensor(_GeoRideEntretienKmBase):
-    """Sensor for km remaining before oil change."""
-
-    def __init__(self, entry, tracker, hass, odometer_sensor) -> None:
-        super().__init__(
-            entry=entry,
-            tracker=tracker,
-            hass=hass,
-            odometer_sensor=odometer_sensor,
-            unique_id_suffix="oil_change_remaining_km",
-            name_suffix="Oil change – remaining km",
-            icon="mdi:oil",
-            intervalle_key="oil_change_km_interval",
-            km_dernier_key="oil_change_km_at_last_oil_change",
-        )
-
-
-class GeoRideKmRestantsRevisionSensor(_GeoRideEntretienKmBase):
-    """Sensor for km remaining before service."""
-
-    def __init__(self, entry, tracker, hass, odometer_sensor) -> None:
-        super().__init__(
-            entry=entry,
-            tracker=tracker,
-            hass=hass,
-            odometer_sensor=odometer_sensor,
-            unique_id_suffix="service_remaining_km",
-            name_suffix="Service – remaining km",
-            icon="mdi:wrench",
-            intervalle_key="service_km_interval",
-            km_dernier_key="service_km_at_last_service",
-        )
+# The drivetrain sensor takes a dynamic label, so it is instantiated separately
+# in async_setup_entry using _GeoRideEntretienKmBase directly.
+DRIVETRAIN_KM_DESCRIPTION = (
+    "drivetrain_remaining_km",
+    "mdi:link-variant",
+    "drivetrain_km_interval",
+    "drivetrain_km_at_last_service",
+)
 
 
 class GeoRideJoursRestantsRevisionSensor(

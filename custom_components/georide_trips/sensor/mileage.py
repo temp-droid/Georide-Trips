@@ -190,49 +190,15 @@ class _GeoRideKmPeriodBase(GeoRideEntityMixin, SensorEntity, RestoreEntity):
         }
 
 
-class GeoRideKmJournaliersSensor(_GeoRideKmPeriodBase):
-    """Sensor for km traveled today (odometer - midnight snapshot)."""
-
-    def __init__(self, entry, tracker, hass, odometer_sensor) -> None:
-        super().__init__(
-            entry=entry,
-            tracker=tracker,
-            hass=hass,
-            odometer_sensor=odometer_sensor,
-            unique_id_suffix="daily_mileage",
-            name_suffix="Daily mileage",
-            icon="mdi:counter",
-            snapshot_key="odometer_at_day_start",
-        )
-
-
-class GeoRideKmHebdomadairesSensor(_GeoRideKmPeriodBase):
-    """Sensor for km traveled this week (odometer - Monday midnight snapshot)."""
-
-    def __init__(self, entry, tracker, hass, odometer_sensor) -> None:
-        super().__init__(
-            entry=entry,
-            tracker=tracker,
-            hass=hass,
-            odometer_sensor=odometer_sensor,
-            unique_id_suffix="weekly_mileage",
-            name_suffix="Weekly mileage",
-            icon="mdi:calendar-week",
-            snapshot_key="odometer_at_week_start",
-        )
-
-
-class GeoRideKmMensuelsSensor(_GeoRideKmPeriodBase):
-    """Sensor for km traveled this month (odometer - 1st-of-month snapshot)."""
-
-    def __init__(self, entry, tracker, hass, odometer_sensor) -> None:
-        super().__init__(
-            entry=entry,
-            tracker=tracker,
-            hass=hass,
-            odometer_sensor=odometer_sensor,
-            unique_id_suffix="monthly_mileage",
-            name_suffix="Monthly mileage",
-            icon="mdi:calendar-month",
-            snapshot_key="odometer_at_month_start",
-        )
+# Descriptions for the three periodic km sensors.
+# Each tuple: (unique_id_suffix, name_suffix, icon, snapshot_key)
+MILEAGE_DESCRIPTIONS = [
+    ("daily_mileage", "Daily mileage", "mdi:counter", "odometer_at_day_start"),
+    ("weekly_mileage", "Weekly mileage", "mdi:calendar-week", "odometer_at_week_start"),
+    (
+        "monthly_mileage",
+        "Monthly mileage",
+        "mdi:calendar-month",
+        "odometer_at_month_start",
+    ),
+]

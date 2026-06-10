@@ -36,9 +36,7 @@ from .trips import (  # noqa: E402
 )
 from .mileage import (  # noqa: E402
     _GeoRideKmPeriodBase,
-    GeoRideKmJournaliersSensor,
-    GeoRideKmHebdomadairesSensor,
-    GeoRideKmMensuelsSensor,
+    MILEAGE_DESCRIPTIONS,
 )
 from .odometer import (  # noqa: E402
     GeoRideLifetimeOdometerSensor,
@@ -47,9 +45,8 @@ from .odometer import (  # noqa: E402
 from .fuel import GeoRideAutonomySensor  # noqa: E402
 from .maintenance import (  # noqa: E402
     _GeoRideEntretienKmBase,
-    GeoRideKmRestantsDrivetrainSensor,
-    GeoRideKmRestantsVidangeSensor,
-    GeoRideKmRestantsRevisionSensor,
+    MAINTENANCE_KM_DESCRIPTIONS,
+    DRIVETRAIN_KM_DESCRIPTION,
     GeoRideJoursRestantsRevisionSensor,
     GeoRideJoursRestantsDrivetrainSensor,
 )
@@ -122,12 +119,34 @@ async def async_setup_entry(
                 # Remaining range sensor (reactive on odometer + fuel entities)
                 autonomy_sensor,
                 # Periodic km sensors — computed in Python, reactive on odometer + snapshot
-                GeoRideKmJournaliersSensor(entry, tracker, hass, odometer_sensor),
-                GeoRideKmHebdomadairesSensor(entry, tracker, hass, odometer_sensor),
-                GeoRideKmMensuelsSensor(entry, tracker, hass, odometer_sensor),
+                *[
+                    _GeoRideKmPeriodBase(
+                        entry,
+                        tracker,
+                        hass,
+                        odometer_sensor,
+                        uid_suffix,
+                        name_suffix,
+                        icon,
+                        snapshot_key,
+                    )
+                    for uid_suffix, name_suffix, icon, snapshot_key in MILEAGE_DESCRIPTIONS
+                ],
                 # Maintenance sensors — remaining km and remaining days computed in Python
-                GeoRideKmRestantsVidangeSensor(entry, tracker, hass, odometer_sensor),
-                GeoRideKmRestantsRevisionSensor(entry, tracker, hass, odometer_sensor),
+                *[
+                    _GeoRideEntretienKmBase(
+                        entry,
+                        tracker,
+                        hass,
+                        odometer_sensor,
+                        uid_suffix,
+                        name_suffix,
+                        icon,
+                        intervalle_key,
+                        km_dernier_key,
+                    )
+                    for uid_suffix, name_suffix, icon, intervalle_key, km_dernier_key in MAINTENANCE_KM_DESCRIPTIONS
+                ],
                 GeoRideJoursRestantsRevisionSensor(entry, tracker, hass),
                 # Sensors fed by the status coordinator (/user/trackers data)
                 GeoRideTrackerStatusSensor(status_coordinator, entry, tracker),
@@ -140,9 +159,20 @@ async def async_setup_entry(
 
         # Drivetrain maintenance sensors — always created; label adapts to the
         # selected drive_type. Time dimension only matters when day_interval>0.
+        _dt_uid, _dt_icon, _dt_intervalle_key, _dt_km_dernier_key = (
+            DRIVETRAIN_KM_DESCRIPTION
+        )
         sensors.append(
-            GeoRideKmRestantsDrivetrainSensor(
-                entry, tracker, hass, odometer_sensor, profile["label"]
+            _GeoRideEntretienKmBase(
+                entry,
+                tracker,
+                hass,
+                odometer_sensor,
+                _dt_uid,
+                f"{profile['label']} – remaining km",
+                _dt_icon,
+                _dt_intervalle_key,
+                _dt_km_dernier_key,
             )
         )
         sensors.append(
@@ -166,16 +196,13 @@ __all__ = [
     "GeoRideTotalDistanceSensor",
     "GeoRideTripCountSensor",
     "_GeoRideKmPeriodBase",
-    "GeoRideKmJournaliersSensor",
-    "GeoRideKmHebdomadairesSensor",
-    "GeoRideKmMensuelsSensor",
+    "MILEAGE_DESCRIPTIONS",
     "GeoRideLifetimeOdometerSensor",
     "GeoRideRealOdometerSensor",
     "GeoRideAutonomySensor",
     "_GeoRideEntretienKmBase",
-    "GeoRideKmRestantsDrivetrainSensor",
-    "GeoRideKmRestantsVidangeSensor",
-    "GeoRideKmRestantsRevisionSensor",
+    "MAINTENANCE_KM_DESCRIPTIONS",
+    "DRIVETRAIN_KM_DESCRIPTION",
     "GeoRideJoursRestantsRevisionSensor",
     "GeoRideJoursRestantsDrivetrainSensor",
     "GeoRideTrackerStatusSensor",
