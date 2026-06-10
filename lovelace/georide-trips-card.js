@@ -15,7 +15,7 @@
  * Companion to the GeoRide Trips integration. Personal fork — no support.
  */
 
-const VERSION = "1.3.0";
+const VERSION = "1.4.0";
 
 // Entity-id suffixes, resolved against the configured `prefix`.
 const SUFFIX = {
@@ -161,7 +161,7 @@ class GeoRideTripsCard extends HTMLElement {
     const due = [];
     for (const t of DUE) {
       const eid = id(t);
-      if (st(eid) === "on") due.push({ label: this._dueLabel(at(eid, "friendly_name"), title) });
+      if (st(eid) === "on") due.push({ label: this._dueLabel(at(eid, "friendly_name"), title), entity: eid });
     }
 
     let severity = "good";
@@ -170,7 +170,10 @@ class GeoRideTripsCard extends HTMLElement {
 
     return {
       title, online, onlineUnset, conn, odo, range, rangeUnset, rangePct, lock, batt, alarms, due, severity, theft, fall,
-      ids: { range: id(SUFFIX.range), odometer: id(SUFFIX.odometer), battery: id(SUFFIX.extBattery) },
+      ids: {
+        range: id(SUFFIX.range), odometer: id(SUFFIX.odometer), battery: id(SUFFIX.extBattery),
+        lock: id(SUFFIX.locked), online: id(SUFFIX.online),
+      },
     };
   }
 
@@ -179,7 +182,7 @@ class GeoRideTripsCard extends HTMLElement {
     return `<div class="online"><ha-icon class="conn ${d.conn.cls}" icon="${d.conn.icon}"></ha-icon>${d.conn.text}</div>`;
   }
   _onlineDot(d) {
-    return `<ha-icon class="conn ${d.conn.cls}" icon="${d.conn.icon}" title="${d.conn.text}"></ha-icon>`;
+    return `<ha-icon class="conn ${d.conn.cls} clickable" data-entity="${d.ids.online}" icon="${d.conn.icon}" title="${d.conn.text}"></ha-icon>`;
   }
   _battChip(d) {
     if (!d.batt.present) return "";
@@ -193,7 +196,7 @@ class GeoRideTripsCard extends HTMLElement {
   _dueStrip(d) {
     if (!d.due.length) return "";
     const chips = d.due.map((x) =>
-      `<div class="chip warn"><ha-icon icon="mdi:wrench"></ha-icon><span>${x.label}</span></div>`).join("");
+      `<div class="chip warn${x.entity ? " clickable" : ""}"${x.entity ? ` data-entity="${x.entity}"` : ""}><ha-icon icon="mdi:wrench"></ha-icon><span>${x.label}</span></div>`).join("");
     return `<div class="row wrap due">${chips}</div>`;
   }
 
@@ -239,7 +242,7 @@ class GeoRideTripsCard extends HTMLElement {
       <div class="ic-head">
         <div class="title sm"><ha-icon icon="mdi:motorbike"></ha-icon>${d.title}</div>
         <div class="rail">
-          <ha-icon class="${d.lock.cls}" icon="${d.lock.icon}" title="${d.lock.text}"></ha-icon>
+          <ha-icon class="${d.lock.cls} clickable" data-entity="${d.ids.lock}" icon="${d.lock.icon}" title="${d.lock.text}"></ha-icon>
           ${this._onlineDot(d)}
           ${d.batt.present ? `<ha-icon class="${d.batt.cls} clickable" data-entity="${d.ids.battery}" icon="${d.batt.glyph}" title="${d.batt.label} · ${d.batt.text}${d.batt.intTitle ? " · " + d.batt.intTitle : ""}"></ha-icon>` : ""}
         </div>
@@ -269,7 +272,7 @@ class GeoRideTripsCard extends HTMLElement {
         <span class="strip-name">${d.title}</span>
         <span class="strip-nums mono">${d.odo}<span class="u">km</span> · ${d.range}${d.rangeUnset ? "" : '<span class="u">km</span>'}</span>
         <span class="strip-icons">
-          <ha-icon class="${d.lock.cls}" icon="${d.lock.icon}" title="${d.lock.text}"></ha-icon>
+          <ha-icon class="${d.lock.cls} clickable" data-entity="${d.ids.lock}" icon="${d.lock.icon}" title="${d.lock.text}"></ha-icon>
           ${this._onlineDot(d)}
           ${d.batt.present ? `<ha-icon class="${d.batt.cls}" icon="${d.batt.glyph}" title="Battery ${d.batt.text}${d.batt.intTitle ? " · " + d.batt.intTitle : ""}"></ha-icon>` : ""}
           ${d.alarms.length ? `<ha-icon class="alarm-ic" icon="mdi:alarm-light" title="${d.alarms.map((a) => a.label).join(", ")}"></ha-icon>` : ""}
