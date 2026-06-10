@@ -382,7 +382,6 @@ class _GeoRideAlerteBinarySensorBase(GeoRideEntityMixin, BinarySensorEntity):
 
         self.tracker_id = str(tracker.get("trackerId"))
         self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
-        self._slug = self.tracker_name.lower().replace(" ", "_")
 
     def _watched_entities(self) -> list[str]:
         """Return the list of entities to watch for recomputation."""

@@ -305,7 +305,6 @@ class GeoRideConfirmerPleinButton(GeoRideEntityMixin, ButtonEntity):
 
         self.tracker_id = str(tracker.get("trackerId"))
         self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
-        self._prefix = self.tracker_name.lower().replace(" ", "_")
 
         self._attr_name = "Confirm refuel"
         self._attr_unique_id = f"{self.tracker_id}_confirm_refuel"
@@ -721,7 +720,6 @@ class GeoRideAppliquerAutonomieButton(GeoRideEntityMixin, ButtonEntity):
 
         self.tracker_id = str(tracker.get("trackerId"))
         self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
-        self._prefix = self.tracker_name.lower().replace(" ", "_")
 
         self._attr_name = "Apply calculated range"
         self._attr_unique_id = f"{self.tracker_id}_apply_calculated_range"

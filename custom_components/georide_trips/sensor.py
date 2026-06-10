@@ -657,13 +657,15 @@ class _GeoRideKmPeriodBase(GeoRideEntityMixin, SensorEntity, RestoreEntity):
         unique_id_suffix: str,
         name_suffix: str,
         icon: str,
-        snapshot_entity: str,
+        snapshot_key: str,
     ) -> None:
         self._entry = entry
         self._tracker = tracker
         self._hass = hass
         self._odometer_sensor = odometer_sensor
-        self._snapshot_entity = snapshot_entity
+        self._snapshot_key = snapshot_key
+        self._snapshot_entity: str | None = None
+        self._snapshot_subscribed = False
 
         self.tracker_id = str(tracker.get("trackerId"))
         self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
@@ -691,8 +693,13 @@ class _GeoRideKmPeriodBase(GeoRideEntityMixin, SensorEntity, RestoreEntity):
 
         from homeassistant.helpers.event import async_track_state_change_event
 
-        # Subscribe to changes of the odometer AND the snapshot
-        watched = [self._odometer_sensor.entity_id, self._snapshot_entity]
+        # Subscribe to changes of the odometer AND the snapshot. The snapshot
+        # number may not be registered yet (platforms set up concurrently);
+        # in that case _handle_state_change retries the subscription.
+        watched = [self._odometer_sensor.entity_id]
+        if (snapshot := self._resolve_snapshot_entity()) is not None:
+            watched.append(snapshot)
+            self._snapshot_subscribed = True
         self.async_on_remove(
             async_track_state_change_event(
                 self._hass,
@@ -702,8 +709,33 @@ class _GeoRideKmPeriodBase(GeoRideEntityMixin, SensorEntity, RestoreEntity):
         )
         # No _recalculate() here — we wait for the first state_change_event
 
+    def _resolve_snapshot_entity(self) -> str | None:
+        """Resolve the snapshot number's entity_id via the registry (cached)."""
+        if self._snapshot_entity is None:
+            from .helpers import resolve_entity_id
+
+            self._snapshot_entity = resolve_entity_id(
+                self._hass, "number", self.tracker_id, self._snapshot_key
+            )
+        return self._snapshot_entity
+
     @callback
     def _handle_state_change(self, event) -> None:
+        # Late subscription: the snapshot number was not yet registered when
+        # this sensor was added — retry now that something changed.
+        if not self._snapshot_subscribed:
+            if (snapshot := self._resolve_snapshot_entity()) is not None:
+                from homeassistant.helpers.event import (
+                    async_track_state_change_event,
+                )
+
+                self.async_on_remove(
+                    async_track_state_change_event(
+                        self._hass, [snapshot], self._handle_state_change
+                    )
+                )
+                self._snapshot_subscribed = True
+
         # Ignore the odometer's startup transitions (unknown/unavailable → value).
         # These transitions occur on every integration reload and can
         # trigger a premature recompute with a snapshot not yet stabilized.
@@ -726,7 +758,10 @@ class _GeoRideKmPeriodBase(GeoRideEntityMixin, SensorEntity, RestoreEntity):
 
     def _is_snapshot_ready(self) -> bool:
         """Return True if the snapshot entity is available and non-zero."""
-        state = self._hass.states.get(self._snapshot_entity)
+        snapshot = self._resolve_snapshot_entity()
+        if snapshot is None:
+            return False
+        state = self._hass.states.get(snapshot)
         if state is None or state.state in (None, "unknown", "unavailable"):
             return False
         try:
@@ -747,7 +782,7 @@ class _GeoRideKmPeriodBase(GeoRideEntityMixin, SensorEntity, RestoreEntity):
             )
             return
 
-        snapshot_km = self._get_float(self._snapshot_entity, 0.0)
+        snapshot_km = self._get_float(self._resolve_snapshot_entity(), 0.0)
         km = max(odometer_km - snapshot_km, 0.0)
         self._attr_native_value = round(km, 1)
 
@@ -761,10 +796,11 @@ class _GeoRideKmPeriodBase(GeoRideEntityMixin, SensorEntity, RestoreEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
+        snapshot = self._resolve_snapshot_entity()
         return {
             "current_odometer": self._odometer_sensor.native_value,
-            "snapshot_start": self._get_float(self._snapshot_entity),
-            "snapshot_entity": self._snapshot_entity,
+            "snapshot_start": self._get_float(snapshot) if snapshot else None,
+            "snapshot_entity": snapshot,
         }
 
 
@@ -772,11 +808,6 @@ class GeoRideKmJournaliersSensor(_GeoRideKmPeriodBase):
     """Sensor for km traveled today (odometer - midnight snapshot)."""
 
     def __init__(self, entry, tracker, hass, odometer_sensor) -> None:
-        slug = (
-            tracker.get("trackerName", f"Tracker {tracker.get('trackerId')}")
-            .lower()
-            .replace(" ", "_")
-        )
         super().__init__(
             entry=entry,
             tracker=tracker,
@@ -785,7 +816,7 @@ class GeoRideKmJournaliersSensor(_GeoRideKmPeriodBase):
             unique_id_suffix="daily_mileage",
             name_suffix="Daily mileage",
             icon="mdi:counter",
-            snapshot_entity=f"number.{slug}_odometer_at_day_start",
+            snapshot_key="odometer_at_day_start",
         )
 
 
@@ -793,11 +824,6 @@ class GeoRideKmHebdomadairesSensor(_GeoRideKmPeriodBase):
     """Sensor for km traveled this week (odometer - Monday midnight snapshot)."""
 
     def __init__(self, entry, tracker, hass, odometer_sensor) -> None:
-        slug = (
-            tracker.get("trackerName", f"Tracker {tracker.get('trackerId')}")
-            .lower()
-            .replace(" ", "_")
-        )
         super().__init__(
             entry=entry,
             tracker=tracker,
@@ -806,7 +832,7 @@ class GeoRideKmHebdomadairesSensor(_GeoRideKmPeriodBase):
             unique_id_suffix="weekly_mileage",
             name_suffix="Weekly mileage",
             icon="mdi:calendar-week",
-            snapshot_entity=f"number.{slug}_odometer_at_week_start",
+            snapshot_key="odometer_at_week_start",
         )
 
 
@@ -814,11 +840,6 @@ class GeoRideKmMensuelsSensor(_GeoRideKmPeriodBase):
     """Sensor for km traveled this month (odometer - 1st-of-month snapshot)."""
 
     def __init__(self, entry, tracker, hass, odometer_sensor) -> None:
-        slug = (
-            tracker.get("trackerName", f"Tracker {tracker.get('trackerId')}")
-            .lower()
-            .replace(" ", "_")
-        )
         super().__init__(
             entry=entry,
             tracker=tracker,
@@ -827,7 +848,7 @@ class GeoRideKmMensuelsSensor(_GeoRideKmPeriodBase):
             unique_id_suffix="monthly_mileage",
             name_suffix="Monthly mileage",
             icon="mdi:calendar-month",
-            snapshot_entity=f"number.{slug}_odometer_at_month_start",
+            snapshot_key="odometer_at_month_start",
         )
 
 
