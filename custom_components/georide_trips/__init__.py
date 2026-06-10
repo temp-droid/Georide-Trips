@@ -6,7 +6,11 @@ import voluptuous as vol
 
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    ConfigEntryNotReady,
+    HomeAssistantError,
+)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import device_registry as dr
 import homeassistant.helpers.config_validation as cv
@@ -105,14 +109,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: GeoRideConfigEntry) -> b
     api = GeoRideTripsAPI(entry.data[CONF_EMAIL], entry.data[CONF_PASSWORD], session)
 
     # Login + list of trackers.
-    # Auth rejected → permanent failure (bad credentials, no retry).
+    # Auth rejected → ConfigEntryAuthFailed so HA starts a reauth flow.
     # Transport/API error → ConfigEntryNotReady so HA retries later.
     try:
         await api.login()
         trackers = await api.get_trackers()
     except GeoRideAuthError as err:
-        _LOGGER.error("Failed to login to GeoRide API: %s", err)
-        return False
+        raise ConfigEntryAuthFailed(f"GeoRide credentials rejected: {err}") from err
     except GeoRideApiError as err:
         raise ConfigEntryNotReady(f"GeoRide API unavailable: {err}") from err
 

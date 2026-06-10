@@ -4,11 +4,14 @@ import logging
 from datetime import datetime, timedelta
 
 from homeassistant.core import callback
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
+
+from .api import GeoRideAuthError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -215,8 +218,10 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
 
             return trips
 
+        except GeoRideAuthError as err:
+            raise ConfigEntryAuthFailed(f"GeoRide credentials rejected: {err}") from err
         except Exception as err:
-            raise UpdateFailed(f"Error fetching trips: {err}")
+            raise UpdateFailed(f"Error fetching trips: {err}") from err
 
 
 class GeoRideLifetimeTripsCoordinator(DataUpdateCoordinator):
@@ -316,8 +321,10 @@ class GeoRideLifetimeTripsCoordinator(DataUpdateCoordinator):
                 "to_date": to_date,
             }
 
+        except GeoRideAuthError as err:
+            raise ConfigEntryAuthFailed(f"GeoRide credentials rejected: {err}") from err
         except Exception as err:
-            raise UpdateFailed(f"Error fetching lifetime trips: {err}")
+            raise UpdateFailed(f"Error fetching lifetime trips: {err}") from err
 
 
 class GeoRideTrackerStatusCoordinator(DataUpdateCoordinator):
@@ -366,5 +373,7 @@ class GeoRideTrackerStatusCoordinator(DataUpdateCoordinator):
                 "Tracker %s not found in /user/trackers response", self.tracker_id
             )
             return {}
+        except GeoRideAuthError as err:
+            raise ConfigEntryAuthFailed(f"GeoRide credentials rejected: {err}") from err
         except Exception as err:
-            raise UpdateFailed(f"Error fetching tracker status: {err}")
+            raise UpdateFailed(f"Error fetching tracker status: {err}") from err

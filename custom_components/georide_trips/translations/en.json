@@ -8,6 +8,13 @@
           "email": "Email",
           "password": "Password"
         }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate GeoRide Trips",
+        "description": "The password for {email} is no longer valid. Enter the new password.",
+        "data": {
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -17,7 +24,8 @@
     },
     "abort": {
       "already_configured": "This GeoRide account is already configured",
-      "single_instance_allowed": "Only a single GeoRide Trips instance is supported"
+      "single_instance_allowed": "Only a single GeoRide Trips instance is supported",
+      "reauth_successful": "Re-authentication was successful"
     }
   },
   "options": {
