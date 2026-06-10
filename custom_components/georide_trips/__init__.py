@@ -363,7 +363,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: GeoRideConfigEntry) -> b
     async def handle_get_trips(call: ServiceCall):
         """Handle get_trips service call."""
         from datetime import datetime as dt
-        from homeassistant.core import SupportsResponse  # noqa: F401 (used below)
 
         tracker_id = call.data["tracker_id"]
         from_date_str = call.data.get("from_date")
