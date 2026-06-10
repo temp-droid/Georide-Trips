@@ -1,1 +1,3 @@
 __pycache__/
+.omc/
+.ruff_cache/
