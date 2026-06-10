@@ -1,369 +1,377 @@
-# 🏍️ GeoRide Trips — Intégration Home Assistant
+# 🏍️ GeoRide Trips — Home Assistant Integration
 
-[![Version](https://img.shields.io/badge/version-2.5-blue.svg)](https://github.com/druide93/Georide-Trips)
+[![Version](https://img.shields.io/badge/version-2.6-blue.svg)](https://github.com/druide93/Georide-Trips)
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-2024.1+-green.svg)](https://www.home-assistant.io/)
 
-Intégration Home Assistant complète pour les trackers GPS **GeoRide**, permettant le suivi des trajets moto, le calcul d'odometer corrigé, la gestion de l'entretien (chaîne, vidange, révision), le suivi de l'autonomie carburant et les alertes de sécurité en temps réel.
+Complete Home Assistant integration for **GeoRide** GPS trackers, providing motorcycle trip tracking, corrected odometer calculation, maintenance management (drivetrain, oil change, service), fuel range tracking and real-time security alerts.
+
+> **⚠️ Breaking change (2.6)**: all maintenance and fuel entity `unique_id`s were renamed from French to English (e.g. `intervalle_km_chaine` → `drivetrain_km_interval`). On upgrade, Home Assistant creates new entities and previously stored maintenance intervals, last-service dates and refuel history reset to defaults — note your values before upgrading and re-enter them. The `odometer_offset` is **not** affected and survives the upgrade.
 
 ---
 
-## ✨ Fonctionnalités
+## ✨ Features
 
-| Domaine | Fonctionnalité |
+| Domain | Feature |
 |---|---|
-| 🗺️ **Trajets** | Historique des 30 derniers jours, dernier trajet détaillé, notification à l'arrêt |
-| 🔢 **Odometer** | Kilométrage réel avec offset configurable (km avant l'installation du tracker) |
-| 📅 **Kilométrage périodique** | Compteurs journaliers, hebdomadaires et mensuels calculés automatiquement |
-| ⛽ **Carburant** | Autonomie restante avec moyenne glissante sur 3 pleins, alerte sous seuil |
-| 🔗 **Entretien chaîne** | Suivi km depuis le dernier entretien, alerte sous seuil configurable |
-| 🛢️ **Vidange** | Suivi km depuis la dernière vidange, alerte sous seuil configurable |
-| 🔧 **Révision** | Double critère km **et** jours, alerte dès que l'un des deux seuils est atteint |
-| 🚨 **Sécurité** | Alarme vol, chute détectée, position en temps réel via Socket.IO |
-| 🔋 **Batterie** | Niveau de batterie externe (moto) et interne (tracker) |
-| 📡 **Temps réel** | Connexion Socket.IO pour mises à jour instantanées (mouvement, alarmes) |
-| 🌿 **Mode éco** | Activation/désactivation du mode éco du tracker depuis HA |
-| 🔒 **Verrouillage** | Verrouillage/déverrouillage du tracker à distance depuis HA |
+| 🗺️ **Trips** | History of the last 30 days, detailed last trip, notification on stop |
+| 🔢 **Odometer** | Real mileage with configurable offset (km before the tracker was installed) |
+| 📅 **Periodic mileage** | Daily, weekly and monthly counters computed automatically |
+| ⛽ **Fuel** | Remaining range with a rolling average over 3 refuels, alert below threshold |
+| 🔗 **Drivetrain maintenance** | Adaptive slot (chain / shaft / belt) — label, intervals and time dimension adapt to the configured drive type |
+| 🛢️ **Oil change** | Tracks km since the last oil change, alert below configurable threshold |
+| 🔧 **Service** | Dual criterion km **and** days, alert as soon as either threshold is reached |
+| 🚨 **Security** | Theft alarm, fall detected, real-time position via Socket.IO |
+| 🔋 **Battery** | External battery level (motorcycle) and internal (tracker) |
+| 📡 **Real time** | Socket.IO connection for instant updates (movement, alarms) |
+| 🌿 **Eco mode** | Enable/disable the tracker's eco mode from HA |
+| 🔒 **Locking** | Lock/unlock the tracker remotely from HA |
 
 ---
 
 ## 🏗️ Architecture
 
-L'intégration repose sur une **architecture hybride** combinant :
+The integration relies on a **hybrid architecture** combining:
 
-- **Socket.IO** (`socket.georide.com`) : mises à jour temps réel pour la position, le mouvement et les alarmes (vol, chute). La latence est quasi nulle.
-- **Polling HTTP** (`api.georide.fr`) via trois coordinators indépendants :
-  - **Trips Coordinator** : récupère les trajets des 30 derniers jours (polling toutes les heures par défaut). Déclenche un refresh immédiat dès qu'un nouveau trajet est détecté.
-  - **Lifetime Coordinator** : cumule le kilométrage total à vie via l'API `/trips` (polling toutes les 24h). Se rafraîchit à minuit et dès qu'un nouveau trajet est détecté.
-  - **Status Coordinator** : récupère l'état du tracker (batterie, statut ligne, mode éco, verrouillage) via `/user/trackers` (polling toutes les 5 minutes).
+- **Socket.IO** (`socket.georide.com`): real-time updates for position, movement and alarms (theft, fall). Latency is near zero.
+- **HTTP Polling** (`api.georide.fr`) via three independent coordinators:
+  - **Trips Coordinator**: fetches the trips from the last 30 days (polling every hour by default). Triggers an immediate refresh as soon as a new trip is detected.
+  - **Lifetime Coordinator**: accumulates the total lifetime mileage via the `/trips` API (polling every 24h). Refreshes at midnight and as soon as a new trip is detected.
+  - **Status Coordinator**: fetches the tracker state (battery, line status, eco mode, locking) via `/user/trackers` (polling every 5 minutes).
 
 ```
-GeoRide API ──────► Trips Coordinator    (1h)  ──► Trajets, odometer récent
-              ├───► Lifetime Coordinator  (24h) ──► Odometer total à vie
-              └───► Status Coordinator   (5min) ──► Batterie, statut, verrouillage, mode éco
+GeoRide API ──────► Trips Coordinator    (1h)  ──► Trips, recent odometer
+              ├───► Lifetime Coordinator  (24h) ──► Lifetime odometer
+              └───► Status Coordinator   (5min) ──► Battery, status, lock, eco mode
 
-socket.georide.com ──► Socket.IO ──► Position, mouvement, alarmes (temps réel)
+socket.georide.com ──► Socket.IO ──► Position, movement, alarms (real time)
 ```
 
-### Détection de fin de trajet
+### End-of-trip detection
 
-La fin de trajet est détectée par la transition `isLocked: False → True` du **Status Coordinator** (polling 5 min). Cette approche est plus fiable que la détection de fin de mouvement via Socket.IO, qui peut être interrompue par des arrêts temporaires (feux rouges, embouteillages).
+The end of a trip is detected by the `isLocked: False → True` transition of the **Status Coordinator** (5 min polling). This approach is more reliable than detecting the end of movement via Socket.IO, which can be interrupted by temporary stops (red lights, traffic jams).
 
-### Snapshots kilométriques automatiques
+### Automatic mileage snapshots
 
-Un `GeoRideMidnightSnapshotManager` natif Python met à jour automatiquement les snapshots sans intervention du blueprint :
-- Chaque nuit à minuit → `km_debut_journee`
-- Chaque lundi à minuit → `km_debut_semaine`
-- Au jour configuré chaque mois → `km_debut_mois`
+A native Python `GeoRideMidnightSnapshotManager` automatically updates the snapshots without any blueprint intervention:
+- Every night at midnight → `odometer_at_day_start`
+- Every Monday at midnight → `odometer_at_week_start`
+- On the configured day each month → `odometer_at_month_start`
 
 ---
 
 ## 📦 Installation
 
-### Via HACS (recommandé)
+### Via HACS (recommended)
 
-1. Dans HACS, aller dans **Intégrations** → menu ⋮ → **Dépôts personnalisés**
-2. Ajouter `https://github.com/druide93/Georide-Trips` avec la catégorie **Intégration**
-3. Rechercher **GeoRide Trips** et installer
-4. Redémarrer Home Assistant
+1. In HACS, go to **Integrations** → ⋮ menu → **Custom repositories**
+2. Add `https://github.com/druide93/Georide-Trips` with the **Integration** category
+3. Search for **GeoRide Trips** and install
+4. Restart Home Assistant
 
-### Manuel
+### Manual
 
-1. Copier le dossier `georide_trips` dans `config/custom_components/`
-2. Redémarrer Home Assistant
+1. Copy the `georide_trips` folder into `config/custom_components/`
+2. Restart Home Assistant
 
 ### Configuration
 
-1. Aller dans **Paramètres → Appareils et services → Ajouter une intégration**
-2. Rechercher **GeoRide Trips**
-3. Saisir l'email et le mot de passe du compte GeoRide
-4. L'intégration crée automatiquement un **appareil par tracker** détecté sur le compte
+1. Go to **Settings → Devices & services → Add integration**
+2. Search for **GeoRide Trips**
+3. Enter the email and password of the GeoRide account
+4. The integration automatically creates **one device per tracker** detected on the account
 
-> **Limitation** : une seule instance (un seul compte GeoRide) est supportée.
-> Plusieurs trackers sur le même compte fonctionnent normalement.
+> **Limitation**: only a single instance (a single GeoRide account) is supported.
+> Multiple trackers on the same account work normally.
 
-#### Options avancées (configurables après installation)
+#### Advanced options (configurable after installation)
 
-| Option | Défaut | Description |
+| Option | Default | Description |
 |---|---|---|
-| Socket.IO activé | `true` | Active les mises à jour temps réel |
-| Polling statut tracker | `300 s` | Intervalle de rafraîchissement batterie/statut/verrouillage (1 min – 1h) |
-| Polling trajets | `3600 s` | Intervalle de rafraîchissement des trajets (5 min – 24h) |
-| Polling lifetime | `86400 s` | Intervalle de rafraîchissement de l'odometer total (1h – 7j) |
-| Historique trajets | `30 jours` | Fenêtre temporelle des trajets récupérés (1–365 jours) |
-| Précision GPS minimale | `0 m` | Rayon max accepté en mètres — 0 = filtre désactivé |
+| Socket.IO enabled | `true` | Enables real-time updates |
+| Tracker status polling | `300 s` | Battery/status/locking refresh interval (1 min – 1h) |
+| Trips polling | `3600 s` | Trips refresh interval (5 min – 24h) |
+| Lifetime polling | `86400 s` | Total odometer refresh interval (1h – 7d) |
+| Trip history | `30 days` | Time window of fetched trips (1–365 days) |
+| Minimum GPS accuracy | `0 m` | Max accepted radius in meters — 0 = filter disabled |
+| Minimum GPS distance | `10 m` | Positions closer than this are ignored (GPS micro-drift filter) — 0 = disabled |
+| Drivetrain type | `chain` | `chain` (800 km), `shaft` (final drive oil — 40000 km or 3 years) or `belt` (16000 km); adapts the drivetrain maintenance entities |
 
 ---
 
-## 📊 Entités créées par tracker
+## 📊 Entities created per tracker
 
 ### Sensors (`sensor.*`)
 
-#### Trajets
-| Entité | Description | Unité |
+#### Trips
+| Entity | Description | Unit |
 |---|---|---|
-| `*_last_trip` | Dernier trajet (état : distance en km) | km |
-| `*_last_trip_details` | Détails du dernier trajet (attributs complets) | — |
-| `*_total_distance` | Distance totale des trajets récents (fenêtre configurée) | km |
-| `*_trip_count` | Nombre de trajets sur la période | — |
+| `*_last_trip` | Last trip (state: distance in km) | km |
+| `*_last_trip_details` | Details of the last trip (full attributes) | — |
+| `*_total_distance` | Total distance of recent trips (configured window) | km |
+| `*_trip_count` | Number of trips over the period | — |
 
-#### Kilométrage
-| Entité | Description | Unité |
+#### Mileage
+| Entity | Description | Unit |
 |---|---|---|
-| `*_lifetime_odometer` | Kilométrage total brut depuis l'installation du tracker | km |
-| `*_odometer` | Odometer réel = lifetime + offset (km avant installation) | km |
-| `*_km_journaliers` | Km parcourus depuis minuit | km |
-| `*_km_hebdomadaires` | Km parcourus depuis lundi minuit | km |
-| `*_km_mensuels` | Km parcourus depuis le jour de reset mensuel configuré | km |
+| `*_lifetime_odometer` | Total raw mileage since the tracker was installed | km |
+| `*_odometer` | Real odometer = lifetime + offset (km before installation) | km |
+| `*_daily_mileage` | Km traveled since midnight | km |
+| `*_weekly_mileage` | Km traveled since Monday midnight | km |
+| `*_monthly_mileage` | Km traveled since the configured monthly reset day | km |
 
-#### Entretien
-| Entité | Description | Unité |
+#### Maintenance
+| Entity | Description | Unit |
 |---|---|---|
-| `*_km_restants_chaine` | Km restants avant le prochain entretien chaîne | km |
-| `*_km_restants_vidange` | Km restants avant la prochaine vidange | km |
-| `*_km_restants_revision` | Km restants avant la prochaine révision | km |
-| `*_jours_restants_revision` | Jours restants avant la prochaine révision | jours |
+| `*_drivetrain_remaining_km` | Km remaining before the next drivetrain maintenance | km |
+| `*_drivetrain_remaining_days` | Days remaining before the next drivetrain maintenance (shaft only) | days |
+| `*_oil_change_remaining_km` | Km remaining before the next oil change | km |
+| `*_service_remaining_km` | Km remaining before the next service | km |
+| `*_service_remaining_days` | Days remaining before the next service | days |
 
-#### Carburant
-| Entité | Description | Unité |
+#### Fuel
+| Entity | Description | Unit |
 |---|---|---|
-| `*_autonomie_restante` | Km restants estimés sur le plein actuel | km |
+| `*_remaining_range` | Estimated km remaining on the current tank | km |
 
 #### Tracker
-| Entité | Description | Unité |
+| Entity | Description | Unit |
 |---|---|---|
-| `*_tracker_status` | Statut du tracker (online / offline) | — |
-| `*_external_battery` | Tension de la batterie externe (moto) | V |
-| `*_internal_battery` | Niveau de batterie interne (tracker) | % |
-| `*_last_alarm` | Dernière alarme reçue via Socket.IO | — |
+| `*_tracker_status` | Tracker status (online / offline) | — |
+| `*_external_battery` | External battery voltage (motorcycle) | V |
+| `*_internal_battery` | Internal battery level (tracker) | % |
+| `*_last_alarm` | Last alarm received via Socket.IO | — |
 
 ### Binary Sensors (`binary_sensor.*`)
 
-| Entité | Source | Description |
+| Entity | Source | Description |
 |---|---|---|
-| `*_en_mouvement` | Socket.IO | `on` si la moto est en mouvement |
-| `*_alarme_vol` | Socket.IO | `on` si l'alarme antivol est active |
-| `*_chute_detectee` | Socket.IO | `on` si une chute est détectée |
-| `*_online` | Status Coordinator | `on` si le tracker est connecté |
-| `*_locked` | Status Coordinator | `on` si le tracker est verrouillé |
-| `*_plein_requis` | Calculé | `on` si l'autonomie restante < seuil d'alerte |
-| `*_entretien_chaine_requis` | Calculé | `on` si km restants chaîne < seuil d'alerte |
-| `*_vidange_requise` | Calculé | `on` si km restants vidange < seuil d'alerte |
-| `*_revision_requise` | Calculé | `on` si km restants révision < seuil d'alerte |
+| `*_moving` | Socket.IO | `on` if the motorcycle is moving |
+| `*_stolen` | Socket.IO | `on` if the anti-theft alarm is active |
+| `*_crashed` | Socket.IO | `on` if a fall is detected |
+| `*_online` | Status Coordinator | `on` if the tracker is connected |
+| `*_locked` | Status Coordinator | `on` if the tracker is locked |
+| `*_refuel_needed` | Computed | `on` if the remaining range < alert threshold |
+| `*_drivetrain_due` | Computed | `on` if remaining drivetrain km (or days, shaft) < alert threshold |
+| `*_oil_change_due` | Computed | `on` if remaining oil-change km < alert threshold |
+| `*_service_due` | Computed | `on` if remaining service km or days < alert threshold |
 
-> Les binary sensors d'entretien et carburant sont **calculés en temps réel** en Python. Le blueprint déclenche les notifications sur la transition `off → on`, ce qui garantit une notification unique par franchissement de seuil.
+> The maintenance and fuel binary sensors are **computed in real time** in Python. The blueprint triggers notifications on the `off → on` transition, which guarantees a single notification per threshold crossing.
 
 ### Switches (`switch.*`)
 
-| Entité | Description |
+| Entity | Description |
 |---|---|
-| `*_mode_eco` | Active / désactive le mode éco du tracker via l'API |
-| `*_verrouillage` | Verrouille / déverrouille le tracker à distance via l'API |
+| `*_eco_mode` | Enable / disable the tracker's eco mode via the API |
+| `*_lock` | Lock / unlock the tracker remotely via the API |
 
 ### Buttons (`button.*`)
 
-| Entité | Action |
+| Entity | Action |
 |---|---|
-| `*_refresh_trips` | Force le rafraîchissement des trajets récents |
-| `*_refresh_odometer` | Force le rafraîchissement du kilométrage lifetime |
-| `*_confirmer_le_plein` | Enregistre le plein (odometer précis + historique inter-plein) |
-| `*_appliquer_autonomie_calculee` | Copie la moyenne glissante calculée dans l'autonomie totale manuelle |
-| `*_enregistrer_entretien_chaine` | Enregistre le dernier entretien chaîne (odometer + date) |
-| `*_enregistrer_vidange` | Enregistre la dernière vidange (odometer + date) |
-| `*_enregistrer_revision` | Enregistre la dernière révision (odometer + date) |
+| `*_refresh_trips` | Force a refresh of the recent trips |
+| `*_refresh_odometer` | Force a refresh of the lifetime mileage |
+| `*_confirm_refuel` | Record the refuel (precise odometer + inter-refuel history) |
+| `*_apply_calculated_range` | Copy the computed rolling average into the manual total range |
+| `*_record_drivetrain` | Record the last drivetrain maintenance (odometer + date) |
+| `*_record_oil_change` | Record the last oil change (odometer + date) |
+| `*_record_service` | Record the last service (odometer + date) |
 
 ### Numbers (`number.*`)
 
-#### Configuration odometer
-| Entité | Description | Défaut |
+#### Odometer configuration
+| Entity | Description | Default |
 |---|---|---|
-| `*_odometer_offset` | Km à ajouter à l'odometer tracker (km avant installation) | 0 km |
+| `*_odometer_offset` | Km to add to the tracker odometer (km before installation) | 0 km |
 
-#### Configuration carburant
-| Entité | Description | Défaut |
+#### Fuel configuration
+| Entity | Description | Default |
 |---|---|---|
-| `*_autonomie_totale` | Autonomie théorique sur un plein | 150 km |
-| `*_seuil_alerte_autonomie` | Seuil d'alerte autonomie | 30 km |
-| `*_km_dernier_plein` | Odometer au dernier plein (stockage) | — |
-| `*_km_plein_hist_1` | Distance inter-plein n-1 (historique FIFO) | — |
-| `*_km_plein_hist_2` | Distance inter-plein n-2 (historique FIFO) | — |
-| `*_km_plein_hist_3` | Distance inter-plein n-3 (historique FIFO) | — |
-| `*_autonomie_moyenne_calculee` | Moyenne glissante sur les 3 derniers pleins | — |
-| `*_nb_pleins_enregistres` | Compteur total de pleins confirmés | — |
+| `*_fuel_total_range` | Theoretical range on a full tank | 150 km |
+| `*_fuel_range_alert_threshold` | Range alert threshold | 30 km |
+| `*_fuel_km_at_last_refuel` | Odometer at the last refuel (storage) | — |
+| `*_fuel_distance_between_refuels_1` | Inter-refuel distance n-1 (FIFO history) | — |
+| `*_fuel_distance_between_refuels_2` | Inter-refuel distance n-2 (FIFO history) | — |
+| `*_fuel_distance_between_refuels_3` | Inter-refuel distance n-3 (FIFO history) | — |
+| `*_fuel_calculated_average_range` | Rolling average over the last 3 refuels | — |
+| `*_fuel_recorded_refuel_count` | Total counter of confirmed refuels | — |
 
-#### Configuration entretien chaîne
-| Entité | Description | Défaut |
+#### Drivetrain maintenance configuration
+
+The defaults adapt to the configured drivetrain type (chain 800 km, shaft 40000 km + 1095 days, belt 16000 km).
+
+| Entity | Description | Default (chain) |
 |---|---|---|
-| `*_intervalle_km_chaine` | Km entre deux entretiens | 500 km |
-| `*_seuil_alerte_chaine` | Km avant échéance pour alerter | 100 km |
-| `*_km_dernier_entretien_chaine` | Odometer au dernier entretien (stockage) | — |
+| `*_drivetrain_km_interval` | Km between two maintenances | 800 km |
+| `*_drivetrain_day_interval` | Max days between maintenances (0 = km-only, shaft: 1095) | 0 days |
+| `*_drivetrain_alert_threshold` | Km before due date to alert | 150 km |
+| `*_drivetrain_km_at_last_service` | Odometer at the last maintenance (storage) | — |
 
-#### Configuration vidange
-| Entité | Description | Défaut |
+#### Oil change configuration
+| Entity | Description | Default |
 |---|---|---|
-| `*_intervalle_km_vidange` | Km entre deux vidanges | 6000 km |
-| `*_seuil_alerte_vidange` | Km avant échéance pour alerter | 500 km |
-| `*_km_derniere_vidange` | Odometer à la dernière vidange (stockage) | — |
+| `*_oil_change_km_interval` | Km between two oil changes | 6000 km |
+| `*_oil_change_alert_threshold` | Km before due date to alert | 500 km |
+| `*_oil_change_km_at_last_oil_change` | Odometer at the last oil change (storage) | — |
 
-#### Configuration révision
-| Entité | Description | Défaut |
+#### Service configuration
+| Entity | Description | Default |
 |---|---|---|
-| `*_intervalle_km_revision` | Km entre deux révisions | 12000 km |
-| `*_intervalle_jours_revision` | Jours max entre révisions | 365 jours |
-| `*_seuil_alerte_revision` | Km avant échéance pour alerter | 1000 km |
-| `*_km_derniere_revision` | Odometer à la dernière révision (stockage) | — |
+| `*_service_km_interval` | Km between two services | 12000 km |
+| `*_service_day_interval` | Max days between services | 365 days |
+| `*_service_alert_threshold` | Km before due date to alert | 1000 km |
+| `*_service_km_at_last_service` | Odometer at the last service (storage) | — |
 
-#### Configuration kilométrage périodique
-| Entité | Description |
+#### Periodic mileage configuration
+| Entity | Description |
 |---|---|
-| `*_seuil_distance_trajet` | Distance minimale pour notifier un trajet |
-| `*_jour_stats_mensuelles` | Jour du mois pour le reset des stats mensuelles (1–28) |
-| `*_km_debut_journee` | Snapshot odometer à minuit (mis à jour automatiquement) |
-| `*_km_debut_semaine` | Snapshot odometer lundi minuit (mis à jour automatiquement) |
-| `*_km_debut_mois` | Snapshot odometer au jour configuré (mis à jour automatiquement) |
+| `*_trip_notification_threshold` | Minimum distance to notify a trip |
+| `*_odometer_at_day_start` | Odometer snapshot at midnight (updated automatically) |
+| `*_odometer_at_week_start` | Odometer snapshot at Monday midnight (updated automatically) |
+| `*_odometer_at_month_start` | Odometer snapshot on the configured day (updated automatically) |
 
 ### Datetimes (`datetime.*`)
 
-| Entité | Description |
+| Entity | Description |
 |---|---|
-| `*_date_dernier_entretien_chaine` | Date du dernier entretien chaîne |
-| `*_date_derniere_vidange` | Date de la dernière vidange |
-| `*_date_derniere_revision` | Date de la dernière révision |
+| `*_drivetrain_last_service_date` | Date of the last drivetrain maintenance |
+| `*_oil_change_last_oil_change_date` | Date of the last oil change |
+| `*_service_last_service_date` | Date of the last service |
+| `*_refuel_pending_at` | Timestamp of the pending refuel confirmation (internal) |
 
 ### Device Tracker (`device_tracker.*`)
 
-| Entité | Description |
+| Entity | Description |
 |---|---|
-| `*_position` | Position GPS en temps réel de la moto |
+| `*_position` | Real-time GPS position of the motorcycle |
 
 ---
 
-## 🤖 Blueprint d'automatisation
+## 🤖 Automation blueprint
 
-L'intégration est livrée avec un **blueprint complet** (`georide-trips.yaml` — v28.1) gérant l'ensemble des notifications et de la logique métier. **Créer une instance par moto.**
+The integration ships with a **complete blueprint** (`georide-trips.yaml` — v28.1) handling all notifications and business logic. **Create one instance per motorcycle.**
 
-### Fonctionnalités du blueprint
+### Blueprint features
 
-**⛽ Carburant**
-- Notification push quand le binary sensor `plein_requis` passe à `on`
-- Enregistrement automatique du plein via le bouton **Confirmer plein** : odometer précis capturé à la fin du trajet vers la station (après verrouillage du tracker)
-- Calcul de la moyenne glissante sur les 3 derniers pleins
-- Notification proposant d'appliquer la nouvelle autonomie calculée via le bouton **Appliquer autonomie calculée**
+**⛽ Fuel**
+- Push notification when the `refuel_needed` binary sensor turns `on`
+- Automatic refuel recording via the **Confirm refuel** button: precise odometer captured at the end of the trip to the station (after the tracker is locked)
+- Rolling-average computation over the last 3 refuels
+- Notification offering to apply the newly computed range via the **Apply computed range** button
 
-**🗺️ Nouveau trajet**
-- Notification à chaque arrêt si la distance dépasse le seuil configuré
-- Contenu : distance, durée, vitesse moyenne, vitesse max, adresse de départ/arrivée
-- Déclenchement sur verrouillage du tracker (plus fiable que la détection de mouvement)
-- Fallback automatique sur changement du capteur de dernier trajet
+**🗺️ New trip**
+- Notification on every stop if the distance exceeds the configured threshold
+- Content: distance, duration, average speed, max speed, departure/arrival address
+- Triggered on tracker locking (more reliable than movement detection)
+- Automatic fallback on a change of the last-trip sensor
 
-**🔗 Entretien chaîne / 🛢️ Vidange / 🔧 Révision**
-- Notification unique à la transition `off → on` du binary sensor correspondant
-- Aucune notification en double lors des redémarrages de HA
+**🔗 Drivetrain maintenance / 🛢️ Oil change / 🔧 Service**
+- Single notification on the `off → on` transition of the corresponding binary sensor
+- No duplicate notifications on HA restarts
 
-**📅 Kilométrage périodique**
-- Bilans hebdomadaires et mensuels en notification push et/ou persistante
+**📅 Periodic mileage**
+- Weekly and monthly summaries as push and/or persistent notifications
 
-**🚨 Sécurité**
-- Notification immédiate en cas d'alarme vol ou de chute détectée
+**🚨 Security**
+- Immediate notification on a theft alarm or a detected fall
 
-### Installation du blueprint
+### Installing the blueprint
 
-1. Copier `georide-trips.yaml` dans `config/blueprints/automation/georide_trips/`
-2. Dans HA : **Paramètres → Automatisations → Blueprints**
-3. Créer une automatisation depuis le blueprint **Moto GeoRide - Suivi complet**
-4. Configurer les entités de chaque section (moto, capteurs, notifications…)
+1. Copy `georide-trips.yaml` into `config/blueprints/automation/georide_trips/`
+2. In HA: **Settings → Automations → Blueprints**
+3. Create an automation from the **Moto GeoRide - Suivi complet** blueprint
+4. Configure the entities of each section (motorcycle, sensors, notifications…)
 
 ---
 
-## 🔧 Calcul de l'odometer
+## 🔧 Odometer calculation
 
-Le tracker GeoRide ne comptabilise les km qu'à partir de sa **date d'installation**, pas depuis l'origine de la moto. L'entité `*_odometer` applique un **offset** pour restituer le kilométrage réel :
+The GeoRide tracker only counts km from its **installation date**, not from the motorcycle's origin. The `*_odometer` entity applies an **offset** to restore the real mileage:
 
 ```
-Odometer réel = Lifetime tracker (km depuis installation) + Offset (km avant installation)
+Real odometer = Tracker lifetime (km since installation) + Offset (km before installation)
 ```
 
-L'offset est configurable directement depuis l'interface HA via `number.*_odometer_offset`. Toutes les entités d'entretien et de carburant utilisent cet odometer corrigé.
+The offset is configurable directly from the HA interface via `number.*_odometer_offset`. All maintenance and fuel entities use this corrected odometer.
 
 ---
 
-## ⛽ Workflow carburant
+## ⛽ Fuel workflow
 
-1. L'utilisateur fait le plein et appuie sur **Confirmer plein**
-2. Le système attend la fin du trajet retour (verrouillage du tracker)
-3. L'odomètre au plein est calculé : `odometer_actuel − distance_post_plein`
-4. La distance inter-plein est enregistrée dans l'historique FIFO (3 valeurs)
-5. La moyenne glissante est recalculée
-6. Une notification propose d'appliquer la nouvelle autonomie via le bouton **Appliquer autonomie calculée**
+1. The user refuels and presses **Confirm refuel**
+2. The system waits for the end of the return trip (tracker locking)
+3. The odometer at the refuel is computed: `current_odometer − distance_after_refuel`
+4. The inter-refuel distance is recorded in the FIFO history (3 values)
+5. The rolling average is recomputed
+6. A notification offers to apply the newly computed range via the **Apply computed range** button
 
-> L'autonomie totale ne se met **jamais à jour automatiquement** — l'utilisateur garde le contrôle total.
+> The total range **never updates automatically** — the user keeps full control.
 
 ---
 
-## 📋 Prérequis
+## 📋 Requirements
 
-- Home Assistant 2024.1 ou supérieur
-- Un compte GeoRide avec au moins un tracker actif
-- Application **Home Assistant Companion** (pour les notifications push)
+- Home Assistant 2024.1 or higher
+- A GeoRide account with at least one active tracker
+- **Home Assistant Companion** app (for push notifications)
 - Python 3.11+
 
-### Dépendances Python (installées automatiquement)
+### Python dependencies (installed automatically)
 
 - `aiohttp >= 3.8.0`
 - `python-socketio[asyncio_client] >= 5.0`
 
 ---
 
-## 🌐 Endpoints API utilisés
+## 🌐 API endpoints used
 
 | Endpoint | Usage |
 |---|---|
-| `POST /user/login` | Authentification |
-| `GET /user/trackers` | Liste des trackers + statut |
-| `GET /tracker/{id}/trips` | Historique des trajets |
-| `GET /tracker/{id}/trip/{trip_id}/positions` | Positions d'un trajet |
-| `PUT /tracker/{id}/eco-mode/on` | Activer le mode éco |
-| `PUT /tracker/{id}/eco-mode/off` | Désactiver le mode éco |
-| `POST /tracker/{id}/toggleLock` | Verrouiller / déverrouiller le tracker |
-| `POST /tracker/{id}/sonor-alarm/off` | Arrêter l'alarme sonore |
-| `Socket.IO socket.georide.com` | Événements temps réel |
+| `POST /user/login` | Authentication |
+| `GET /user/trackers` | List of trackers + status |
+| `GET /tracker/{id}/trips` | Trip history |
+| `GET /tracker/{id}/trip/{trip_id}/positions` | Positions of a trip |
+| `PUT /tracker/{id}/eco` | Enable / disable eco mode |
+| `POST /tracker/{id}/toggleLock` | Lock / unlock the tracker |
+| `POST /tracker/{id}/sonor-alarm/off` | Stop the audible alarm |
+| `Socket.IO socket.georide.com` | Real-time events |
 
 ---
 
-## 🛠️ Dépannage
+## 🛠️ Troubleshooting
 
-**Le kilométrage lifetime ne se met pas à jour**
-Vérifier que le coordinator lifetime n'est pas en erreur dans les logs. Le refresh est déclenché à minuit et après chaque nouveau trajet.
+**The lifetime mileage does not update**
+Check that the lifetime coordinator is not in error in the logs. The refresh is triggered at midnight and after each new trip.
 
-**L'odometer est incorrect**
-Configurer `number.*_odometer_offset` avec le kilométrage de la moto au moment de l'installation du tracker.
+**The odometer is incorrect**
+Configure `number.*_odometer_offset` with the motorcycle's mileage at the time the tracker was installed.
 
-**Les notifications d'entretien se répètent**
-Le blueprint déclenche les notifications sur la transition `off → on` des binary sensors. Vérifier dans les traces d'automatisation que le binary sensor repasse bien à `off` après confirmation d'entretien.
+**Maintenance notifications repeat**
+The blueprint triggers notifications on the `off → on` transition of the binary sensors. Check in the automation traces that the binary sensor does return to `off` after maintenance confirmation.
 
-**Socket.IO se déconnecte fréquemment**
-Normal en cas de réseau instable — le polling HTTP prend le relais automatiquement. Désactiver Socket.IO dans les options si la connexion est trop instable.
+**Socket.IO disconnects frequently**
+Normal on an unstable network — HTTP polling takes over automatically. Disable Socket.IO in the options if the connection is too unstable.
 
-**Le capteur "En mouvement" reste bloqué à `on`**
-Le `StatusCoordinator` (polling 5 min) détecte automatiquement l'état réel et force le retour à `off`. Le délai maximum de correction est de 5 minutes.
+**The "In movement" sensor stays stuck at `on`**
+The `StatusCoordinator` (5 min polling) automatically detects the real state and forces a return to `off`. The maximum correction delay is 5 minutes.
 
-**Les entités n'apparaissent pas après installation**
-S'assurer que le dossier s'appelle exactement `georide_trips` et redémarrer Home Assistant complètement (pas seulement recharger la configuration).
+**Entities do not appear after installation**
+Make sure the folder is named exactly `georide_trips` and fully restart Home Assistant (not just reload the configuration).
 
-**Les positions GPS sont imprécises**
-Configurer le filtre GPS dans les options (`Précision GPS minimale`) pour ignorer les positions dont le rayon de précision dépasse le seuil défini (ex. 50 m).
-
----
-
-## 📄 Licence
-
-MIT License — Voir [LICENSE](LICENSE) pour les détails.
+**GPS positions are inaccurate**
+Configure the GPS filter in the options (`Minimum GPS accuracy`) to ignore positions whose accuracy radius exceeds the defined threshold (e.g. 50 m).
 
 ---
 
-## 🤝 Contribution
+## 📄 License
 
-Les issues et pull requests sont les bienvenus sur [GitHub](https://github.com/druide93/Georide-Trips).
+MIT License — See [LICENSE](LICENSE) for details.
+
+---
+
+## 🤝 Contributing
+
+Issues and pull requests are welcome on [GitHub](https://github.com/druide93/Georide-Trips).
 
 
-> **Note** : Ce projet n'est pas affilié à GeoRide. GeoRide est une marque déposée de GeoRide SAS.
+> **Note**: This project is not affiliated with GeoRide. GeoRide is a registered trademark of GeoRide SAS.

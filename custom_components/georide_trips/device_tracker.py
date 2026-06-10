@@ -1,15 +1,15 @@
-"""GeoRide Trips device tracker - Position GPS de la moto via Socket.IO.
+"""GeoRide Trips device tracker - GPS position of the motorcycle via Socket.IO.
 
-Entité device_tracker rattachée au device de chaque moto :
-- Position GPS en temps réel via événements Socket.IO (event "position")
-- Fallback : récupération initiale via API REST au démarrage
-- Pas de polling : les mises à jour arrivent dès que GeoRide envoie une position
+device_tracker entity attached to each motorcycle's device:
+- Real-time GPS position via Socket.IO events (event "position")
+- Fallback: initial fetch via REST API at startup
+- No polling: updates arrive as soon as GeoRide sends a position
 
-Filtres appliqués sur les événements Socket.IO :
-- Précision GPS (radius) : positions trop imprécises ignorées entièrement
-- Statut moving=False : attributs mis à jour en mémoire, état HA NON écrit
-  → pas d'entrée recorder quand la moto est à l'arrêt → plus de traits parasites
-- Distance minimale : micro-dérives GPS ignorées (seuil configurable, défaut 10m)
+Filters applied to Socket.IO events:
+- GPS accuracy (radius): positions that are too imprecise are ignored entirely
+- moving=False status: attributes updated in memory, HA state NOT written
+  → no recorder entry when the motorcycle is stopped → no more stray map lines
+- Minimum distance: GPS micro-drift ignored (configurable threshold, default 10m)
 """
 
 import logging
@@ -35,8 +35,8 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Calcule la distance en mètres entre deux coordonnées GPS (formule Haversine)."""
-    R = 6_371_000  # rayon terrestre en mètres
+    """Compute the distance in meters between two GPS coordinates (Haversine formula)."""
+    R = 6_371_000  # Earth radius in meters
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlam = math.radians(lon2 - lon1)
@@ -68,17 +68,19 @@ async def async_setup_entry(
 
 
 class GeoRidePositionTracker(TrackerEntity):
-    """Device tracker représentant la position GPS d'une moto GeoRide.
+    """Device tracker representing the GPS position of a GeoRide motorcycle.
 
-    Mises à jour via Socket.IO event "position" — temps réel, sans polling.
-    Fallback initial via API REST pour avoir une position dès le démarrage.
+    Updates via the Socket.IO "position" event — real-time, no polling.
+    Initial fallback via REST API to have a position right from startup.
 
-    Filtres actifs (dans l'ordre d'application) :
-    1. Précision GPS (radius > seuil) → ignoré entièrement
-    2. moving=False → attributs mis à jour en mémoire, état HA NON écrit
-    3. Distance < seuil_min → micro-dérive ignorée, état HA NON écrit
-    4. Sinon → async_write_ha_state() → entrée recorder
+    Active filters (in order of application):
+    1. GPS accuracy (radius > threshold) → ignored entirely
+    2. moving=False → attributes updated in memory, HA state NOT written
+    3. Distance < min_threshold → micro-drift ignored, HA state NOT written
+    4. Otherwise → async_write_ha_state() → recorder entry
     """
+
+    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -97,7 +99,7 @@ class GeoRidePositionTracker(TrackerEntity):
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
 
         self._attr_unique_id = f"{self._tracker_id}_position"
-        self._attr_name = f"{self._tracker_name} Position"
+        self._attr_name = "Position"
         self._attr_icon = "mdi:motorbike"
 
         # Position
@@ -110,14 +112,14 @@ class GeoRidePositionTracker(TrackerEntity):
         self._altitude: float | None = None
         self._is_moving: bool = False
 
-        # Désenregistrement Socket.IO
+        # Socket.IO unregistration
         self._unsub_socket: list = []
 
     @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self._tracker_id)},
-            name=f"{self._tracker_name} Trips",
+            name=self._tracker_name,
             manufacturer="GeoRide",
             model=self._tracker.get("model", "GeoRide Tracker"),
             sw_version=str(self._tracker.get("softwareVersion", "")),
@@ -151,7 +153,7 @@ class GeoRidePositionTracker(TrackerEntity):
         if self._fix_time:
             attrs["fix_time"] = self._fix_time
         if self._speed is not None:
-            attrs["speed_kmh"] = round(self._speed, 1)  # déjà en km/h
+            attrs["speed_kmh"] = round(self._speed, 1)  # already in km/h
         if self._heading is not None:
             attrs["heading"] = self._heading
         if self._altitude is not None:
@@ -161,32 +163,32 @@ class GeoRidePositionTracker(TrackerEntity):
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     async def async_added_to_hass(self) -> None:
-        """Démarrage : position initiale + abonnement Socket.IO."""
+        """Startup: initial position + Socket.IO subscription."""
         await super().async_added_to_hass()
 
-        # Récupérer le socket_manager depuis hass.data (disponible ici, après setup complet)
+        # Fetch the socket_manager from hass.data (available here, after full setup)
         entry_data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         self._socket_manager = entry_data.get("socket_manager")
 
-        # Abonnement aux événements position via Socket.IO
+        # Subscribe to position events via Socket.IO
         if self._socket_manager:
             unsub = self._socket_manager.register_callback(
                 self._tracker_id, "position", self._handle_position_event
             )
             self._unsub_socket.append(unsub)
             _LOGGER.info(
-                "Device tracker '%s' abonné aux événements position Socket.IO",
+                "Device tracker '%s' subscribed to Socket.IO position events",
                 self._tracker_name,
             )
         else:
             _LOGGER.warning(
-                "Pas de socket_manager disponible pour '%s' — pas de mises à jour temps réel",
+                "No socket_manager available for '%s' — no real-time updates",
                 self._tracker_name,
             )
 
-        # Position initiale via API REST en tâche de fond : get_last_position
-        # enchaîne plusieurs appels API et ne doit pas bloquer l'ajout de
-        # l'entité (un événement Socket.IO peut la fournir avant, tant mieux).
+        # Initial position via REST API as a background task: get_last_position
+        # chains several API calls and must not block adding the entity
+        # (a Socket.IO event may provide it sooner, all the better).
         self._entry.async_create_background_task(
             self.hass,
             self._async_fetch_initial_position(),
@@ -194,43 +196,43 @@ class GeoRidePositionTracker(TrackerEntity):
         )
 
     async def async_will_remove_from_hass(self) -> None:
-        """Nettoyage des abonnements."""
+        """Clean up subscriptions."""
         for unsub in self._unsub_socket:
             unsub()
         self._unsub_socket.clear()
 
-    # ── Handlers Socket.IO ───────────────────────────────────────────────────
+    # ── Socket.IO handlers ───────────────────────────────────────────────────
 
     @callback
     def _handle_position_event(self, data: dict) -> None:
-        """Reçoit un événement 'position' depuis Socket.IO et met à jour l'état.
+        """Receive a 'position' event from Socket.IO and update the state.
 
-        Logique de filtrage (dans l'ordre) :
-        1. lat/lon manquants → ignoré
-        2. Précision GPS insuffisante → ignoré entièrement
-        3. moving=False → attributs mis à jour en mémoire, état HA NON écrit
-           (pas d'entrée recorder → pas de traits parasites sur la carte)
-        4. Distance < seuil_min → micro-dérive ignorée, état HA NON écrit
-        5. Sinon → async_write_ha_state() → entrée recorder
+        Filtering logic (in order):
+        1. Missing lat/lon → ignored
+        2. Insufficient GPS accuracy → ignored entirely
+        3. moving=False → attributes updated in memory, HA state NOT written
+           (no recorder entry → no stray lines on the map)
+        4. Distance < min_threshold → micro-drift ignored, HA state NOT written
+        5. Otherwise → async_write_ha_state() → recorder entry
         """
-        _LOGGER.debug("Position Socket.IO pour %s : %s", self._tracker_name, data)
+        _LOGGER.debug("Socket.IO position for %s: %s", self._tracker_name, data)
 
         lat = data.get("latitude")
         lon = data.get("longitude")
         if lat is None or lon is None:
             _LOGGER.warning(
-                "Événement position sans lat/lon pour %s : %s", self._tracker_name, data
+                "Position event without lat/lon for %s: %s", self._tracker_name, data
             )
             return
 
-        # ── 1. Filtre précision GPS ──────────────────────────────────────────
+        # ── 1. GPS accuracy filter ───────────────────────────────────────────
         accuracy = int(data.get("radius", 0) or 0)
         min_accuracy = self._entry.options.get(
             CONF_GPS_MIN_ACCURACY, DEFAULT_GPS_MIN_ACCURACY
         )
         if min_accuracy > 0 and accuracy > min_accuracy:
             _LOGGER.debug(
-                "Position ignorée pour %s : précision insuffisante (radius=%dm > seuil=%dm)",
+                "Position ignored for %s: insufficient accuracy (radius=%dm > threshold=%dm)",
                 self._tracker_name,
                 accuracy,
                 min_accuracy,
@@ -241,10 +243,10 @@ class GeoRidePositionTracker(TrackerEntity):
         lon = float(lon)
         is_moving = bool(data.get("moving", False))
 
-        # ── 2. Filtre moving=False ───────────────────────────────────────────
-        # Les attributs en mémoire sont mis à jour (speed, heading, fix_time…)
-        # mais async_write_ha_state() n'est PAS appelé → aucune entrée recorder
-        # → pas de point sur la carte → pas de trait parasite entre sessions.
+        # ── 2. moving=False filter ───────────────────────────────────────────
+        # The in-memory attributes are updated (speed, heading, fix_time…)
+        # but async_write_ha_state() is NOT called → no recorder entry
+        # → no point on the map → no stray line between sessions.
         if not is_moving:
             self._gps_accuracy = accuracy
             self._fix_time = data.get("fixtime") or data.get("fixTime")
@@ -253,12 +255,12 @@ class GeoRidePositionTracker(TrackerEntity):
             self._altitude = data.get("altitude")
             self._is_moving = False
             _LOGGER.debug(
-                "Position non enregistrée pour %s : tracker à l'arrêt (moving=False)",
+                "Position not recorded for %s: tracker stopped (moving=False)",
                 self._tracker_name,
             )
             return
 
-        # ── 3. Filtre distance minimale (anti micro-dérive) ──────────────────
+        # ── 3. Minimum distance filter (anti micro-drift) ────────────────────
         min_distance = self._entry.options.get(
             CONF_GPS_MIN_DISTANCE, DEFAULT_GPS_MIN_DISTANCE
         )
@@ -270,14 +272,14 @@ class GeoRidePositionTracker(TrackerEntity):
             distance_m = _haversine_distance(self._latitude, self._longitude, lat, lon)
             if distance_m < min_distance:
                 _LOGGER.debug(
-                    "Position ignorée pour %s : déplacement trop faible (%.1fm < seuil=%dm)",
+                    "Position ignored for %s: movement too small (%.1fm < threshold=%dm)",
                     self._tracker_name,
                     distance_m,
                     min_distance,
                 )
                 return
 
-        # ── 4. Mise à jour complète ──────────────────────────────────────────
+        # ── 4. Full update ───────────────────────────────────────────────────
         self._latitude = lat
         self._longitude = lon
         self._gps_accuracy = accuracy
@@ -289,16 +291,16 @@ class GeoRidePositionTracker(TrackerEntity):
 
         self.async_write_ha_state()
         _LOGGER.debug(
-            "Position mise à jour pour %s : lat=%.5f lon=%.5f moving=True",
+            "Position updated for %s: lat=%.5f lon=%.5f moving=True",
             self._tracker_name,
             self._latitude,
             self._longitude,
         )
 
-    # ── Fallback API REST ────────────────────────────────────────────────────
+    # ── REST API fallback ────────────────────────────────────────────────────
 
     async def _async_fetch_initial_position(self) -> None:
-        """Récupère la dernière position connue via API REST au démarrage."""
+        """Fetch the last known position via REST API at startup."""
         try:
             position = await self._api.get_last_position(self._tracker_id)
             if position:
@@ -308,7 +310,7 @@ class GeoRidePositionTracker(TrackerEntity):
                 )
                 if min_accuracy > 0 and accuracy > min_accuracy:
                     _LOGGER.debug(
-                        "Position initiale ignorée pour %s : précision insuffisante (radius=%dm > seuil=%dm)",
+                        "Initial position ignored for %s: insufficient accuracy (radius=%dm > threshold=%dm)",
                         self._tracker_name,
                         accuracy,
                         min_accuracy,
@@ -323,18 +325,18 @@ class GeoRidePositionTracker(TrackerEntity):
                 self._altitude = position.get("altitude")
                 self.async_write_ha_state()
                 _LOGGER.info(
-                    "Position initiale (API) pour %s : lat=%s lon=%s",
+                    "Initial position (API) for %s: lat=%s lon=%s",
                     self._tracker_name,
                     self._latitude,
                     self._longitude,
                 )
             else:
                 _LOGGER.debug(
-                    "Pas de position initiale disponible pour %s", self._tracker_name
+                    "No initial position available for %s", self._tracker_name
                 )
         except Exception as err:
             _LOGGER.error(
-                "Erreur récupération position initiale pour %s : %s",
+                "Error fetching initial position for %s: %s",
                 self._tracker_name,
                 err,
             )

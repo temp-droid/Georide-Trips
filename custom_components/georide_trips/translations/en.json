@@ -32,7 +32,8 @@
           "lifetime_scan_interval": "Total mileage interval (seconds)",
           "trips_days_back": "Days of history",
           "gps_min_accuracy": "Minimum GPS accuracy (meters, 0 = disabled)",
-          "gps_min_distance": "Minimum GPS distance between positions (meters, 0 = disabled)"
+          "gps_min_distance": "Minimum GPS distance between positions (meters, 0 = disabled)",
+          "drive_type": "Drivetrain type (chain, shaft, belt)"
         },
         "data_description": {
           "socketio_enabled": "Enables real-time GPS position, motion detection, and alerts (theft, fall). Requires python-socketio installed.",
@@ -41,7 +42,8 @@
           "lifetime_scan_interval": "Update frequency for total mileage. Minimum 3600s (1h), default 86400s (24h).",
           "trips_days_back": "Number of days to fetch for recent trips. Default: 30 days.",
           "gps_min_accuracy": "Maximum accepted GPS accuracy radius in meters. Positions with a larger radius are ignored. 0 = disabled (all positions accepted). Example: 50 = ignore positions with accuracy > 50m.",
-          "gps_min_distance": "Minimum distance in meters between two recorded positions. Positions closer than this threshold are ignored to filter GPS micro-drift. 0 = disabled. Recommended: 10m."
+          "gps_min_distance": "Minimum distance in meters between two recorded positions. Positions closer than this threshold are ignored to filter GPS micro-drift. 0 = disabled. Recommended: 10m.",
+          "drive_type": "Adapts the drivetrain maintenance slot to your motorcycle: chain (800 km interval), shaft (final drive oil, 40000 km or 3 years), belt (16000 km). Changing the type relabels the entities but keeps your stored intervals."
         }
       }
     }

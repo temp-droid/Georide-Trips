@@ -1,18 +1,18 @@
 """GeoRide Trips datetime entities.
 
-Entités datetime rattachées au device de chaque moto :
+Datetime entities attached to each motorcycle's device:
 
-── Entretien Chaîne ──────────────────────────────────────────────
-- date_dernier_entretien_chaine   : date du dernier entretien chaîne
+── Drivetrain maintenance (adaptive: chain / shaft / belt) ───────
+- drivetrain_last_service_date   : date of the last drivetrain maintenance
 
-── Entretien Vidange ─────────────────────────────────────────────
-- date_dernier_entretien_vidange  : date de la dernière vidange
+── Oil change maintenance ────────────────────────────────────────
+- oil_change_last_oil_change_date  : date of the last oil change
 
-── Entretien Révision ────────────────────────────────────────────
-- date_dernier_entretien_revision : date de la dernière révision
+── Service maintenance ───────────────────────────────────────────
+- service_last_service_date : date of the last service
 
-── Plein en attente (usage interne) ──────────────────────────────
-- plein_pending_at : horodatage du plein en attente (epoch 1970 = pas de plein en attente)
+── Pending refuel (internal use) ─────────────────────────────────
+- refuel_pending_at : timestamp of the pending refuel (epoch 1970 = no pending refuel)
 """
 
 import logging
@@ -26,36 +26,41 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    CONF_DRIVE_TYPE,
+    DEFAULT_DRIVE_TYPE,
+    DRIVETRAIN_PROFILES,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-# Sentinel « pas de plein en attente » — convention partagée avec button.py
-# (_get_datetime traite l'année 1970 comme None, _set_datetime(None) écrit 1970).
+# "No pending refuel" sentinel — convention shared with button.py
+# (_get_datetime treats year 1970 as None, _set_datetime(None) writes 1970).
 EPOCH_SENTINEL = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 DATETIME_DESCRIPTIONS = [
     {
-        "key": "date_dernier_entretien_chaine",
-        "name": "Entretien Chaîne - Date dernier entretien",
+        "key": "drivetrain_last_service_date",
+        "name": "Drivetrain – last service date",
         "icon": "mdi:calendar-check",
         "entity_category": EntityCategory.CONFIG,
     },
     {
-        "key": "date_dernier_entretien_vidange",
-        "name": "Entretien Vidange - Date dernière vidange",
+        "key": "oil_change_last_oil_change_date",
+        "name": "Oil change – last oil-change date",
         "icon": "mdi:calendar-check",
         "entity_category": EntityCategory.CONFIG,
     },
     {
-        "key": "date_dernier_entretien_revision",
-        "name": "Entretien Révision - Date dernière révision",
+        "key": "service_last_service_date",
+        "name": "Service – last service date",
         "icon": "mdi:calendar-check",
         "entity_category": EntityCategory.CONFIG,
     },
     {
-        "key": "plein_pending_at",
-        "name": "Plein - Horodatage en attente",
+        "key": "refuel_pending_at",
+        "name": "Refuel – pending timestamp",
         "icon": "mdi:clock-outline",
         "entity_category": EntityCategory.DIAGNOSTIC,
         "default_epoch": True,
@@ -72,9 +77,16 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     trackers = data["trackers"]
 
+    profile = DRIVETRAIN_PROFILES.get(
+        entry.options.get(CONF_DRIVE_TYPE, DEFAULT_DRIVE_TYPE),
+        DRIVETRAIN_PROFILES["chain"],
+    )
+
     entities = []
     for tracker in trackers:
         for desc in DATETIME_DESCRIPTIONS:
+            if desc["key"] == "drivetrain_last_service_date":
+                desc = {**desc, "name": f"{profile['label']} – last service date"}
             entities.append(GeoRideDateTimeEntity(entry, tracker, desc))
 
     async_add_entities(entities)
@@ -86,7 +98,9 @@ async def async_setup_entry(
 
 
 class GeoRideDateTimeEntity(DateTimeEntity, RestoreEntity):
-    """Entité datetime persistante rattachée au device GeoRide."""
+    """Persistent datetime entity attached to the GeoRide device."""
+
+    _attr_has_entity_name = True
 
     def __init__(self, entry: ConfigEntry, tracker: dict, desc: dict) -> None:
         self._entry = entry
@@ -97,13 +111,13 @@ class GeoRideDateTimeEntity(DateTimeEntity, RestoreEntity):
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
 
         self._attr_unique_id = f"{self._tracker_id}_{desc['key']}"
-        self._attr_name = f"{self._tracker_name} {desc['name']}"
+        self._attr_name = desc["name"]
         self._attr_icon = desc["icon"]
         self._attr_entity_category = desc.get("entity_category")
 
-        # Valeur par défaut : sentinel 1970 pour plein_pending_at (un défaut
-        # à now() simulerait un plein en attente dès l'installation → calcul
-        # de plein fantôme au premier verrouillage), sinon maintenant (UTC).
+        # Default value: 1970 sentinel for refuel_pending_at (a default of
+        # now() would simulate a pending refuel right from install → phantom
+        # refuel calculation on the first lock), otherwise now (UTC).
         if desc.get("default_epoch"):
             self._attr_native_value: datetime = EPOCH_SENTINEL
         else:
@@ -113,20 +127,20 @@ class GeoRideDateTimeEntity(DateTimeEntity, RestoreEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self._tracker_id)},
-            name=f"{self._tracker_name} Trips",
+            name=self._tracker_name,
             manufacturer="GeoRide",
             model=self._tracker.get("model", "GeoRide Tracker"),
             sw_version=str(self._tracker.get("softwareVersion", "")),
         )
 
     async def async_added_to_hass(self) -> None:
-        """Restaure le dernier état au redémarrage."""
+        """Restore the last state on restart."""
         await super().async_added_to_hass()
         if (last_state := await self.async_get_last_state()) is not None:
             if last_state.state not in (None, "unknown", "unavailable"):
                 try:
                     restored = datetime.fromisoformat(last_state.state)
-                    # S'assurer que la datetime est timezone-aware (UTC)
+                    # Ensure the datetime is timezone-aware (UTC)
                     if restored.tzinfo is None:
                         restored = restored.replace(tzinfo=timezone.utc)
                     self._attr_native_value = restored
@@ -144,7 +158,7 @@ class GeoRideDateTimeEntity(DateTimeEntity, RestoreEntity):
                     )
 
     async def async_set_value(self, value: datetime) -> None:
-        """Met à jour la date depuis l'interface ou une automation."""
+        """Update the date from the UI or an automation."""
         if value.tzinfo is None:
             value = value.replace(tzinfo=timezone.utc)
         self._attr_native_value = value

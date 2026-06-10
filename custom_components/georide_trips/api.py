@@ -31,8 +31,8 @@ class GeoRideTripsAPI:
         self.session = session
         self.base_url = "https://api.georide.fr"
         self.token = None
-        # Sérialise les logins : un seul re-login partagé entre toutes les
-        # requêtes concurrentes (évite la tempête de logins sur 401).
+        # Serializes logins: a single re-login shared across all concurrent
+        # requests (avoids the login storm on 401).
         self._login_lock = asyncio.Lock()
 
     async def login(self) -> bool:
@@ -60,7 +60,7 @@ class GeoRideTripsAPI:
             raise GeoRideApiError(f"Error during login: {err}") from err
 
     async def _ensure_token(self) -> None:
-        """Login si aucun token, en partageant un seul login entre tâches."""
+        """Login if no token, sharing a single login across tasks."""
         if self.token:
             return
         async with self._login_lock:
@@ -68,7 +68,7 @@ class GeoRideTripsAPI:
                 await self.login()
 
     async def _relogin_if_stale(self, stale_token: str) -> None:
-        """Re-login après un 401, sauf si une autre tâche l'a déjà fait."""
+        """Re-login after a 401, unless another task has already done it."""
         async with self._login_lock:
             if self.token == stale_token:
                 await self.login()
@@ -83,11 +83,11 @@ class GeoRideTripsAPI:
     ) -> Any:
         """Perform an authenticated request and return the parsed JSON body.
 
-        Comportement uniforme pour tous les endpoints :
-        - login automatique si aucun token,
-        - retry unique sur 401 après ré-authentification,
-        - GeoRideApiError sur erreur HTTP/transport (jamais de [] silencieux),
-        - GeoRideAuthError si le 401 persiste après re-login.
+        Uniform behavior for all endpoints:
+        - automatic login if no token,
+        - single retry on 401 after re-authentication,
+        - GeoRideApiError on HTTP/transport error (never a silent []),
+        - GeoRideAuthError if the 401 persists after re-login.
         """
         await self._ensure_token()
 
@@ -105,7 +105,7 @@ class GeoRideTripsAPI:
                     try:
                         return await response.json()
                     except (aiohttp.ContentTypeError, ValueError):
-                        # Certains endpoints d'action renvoient un corps vide
+                        # Some action endpoints return an empty body
                         return None
                 if response.status == 401:
                     if _retry:
@@ -143,7 +143,7 @@ class GeoRideTripsAPI:
         if to_date is None:
             to_date = datetime.now(timezone.utc)
 
-        # Convertir en UTC puis formater sans fuseau (l'API GeoRide attend de l'UTC pur)
+        # Convert to UTC then format without timezone (the GeoRide API expects pure UTC)
         if from_date.tzinfo is not None:
             from_date = from_date.astimezone(timezone.utc).replace(tzinfo=None)
         if to_date.tzinfo is not None:
@@ -164,16 +164,16 @@ class GeoRideTripsAPI:
     async def get_last_position(self, tracker_id: str) -> Optional[Dict[str, Any]]:
         """Get last known position via the last trip's positions endpoint.
 
-        L'API GeoRide n'expose pas d'endpoint /positions/last.
-        On récupère les trips des dernières 24h et on prend la dernière position du dernier trip.
+        The GeoRide API does not expose a /positions/last endpoint.
+        We fetch the trips from the last 24h and take the last position of the last trip.
         """
-        # Récupérer les trips récents (24h)
+        # Fetch the recent trips (24h)
         from_date = datetime.now(timezone.utc) - timedelta(hours=24)
         to_date = datetime.now(timezone.utc)
         trips = await self.get_trips(tracker_id, from_date, to_date)
 
         if not trips:
-            # Élargir à 7 jours si aucun trip dans les 24h
+            # Widen to 7 days if no trip in the last 24h
             from_date = datetime.now(timezone.utc) - timedelta(days=7)
             trips = await self.get_trips(tracker_id, from_date, to_date)
 
@@ -183,7 +183,7 @@ class GeoRideTripsAPI:
             )
             return None
 
-        # Prendre le trip le plus récent
+        # Take the most recent trip
         last_trip = sorted(
             trips, key=lambda t: t.get("endDate", t.get("startDate", ""))
         )[-1]
@@ -194,7 +194,7 @@ class GeoRideTripsAPI:
             _LOGGER.debug("Trip has no start/end date for tracker %s", tracker_id)
             return None
 
-        # Récupérer les positions de ce trip
+        # Fetch the positions for this trip
         positions = await self.get_trip_positions_by_date(
             tracker_id, trip_start, trip_end
         )
@@ -202,7 +202,7 @@ class GeoRideTripsAPI:
         if not positions:
             return None
 
-        # Retourner la dernière position
+        # Return the last position
         last = positions[-1]
         _LOGGER.debug("Last position for tracker %s: %s", tracker_id, last)
         return last
@@ -219,7 +219,7 @@ class GeoRideTripsAPI:
             f"/tracker/{tracker_id}/trips/positions",
             params={"from": from_date, "to": to_date},
         )
-        # L'API retourne {"positions": [...]} ou directement [...]
+        # The API returns {"positions": [...]} or directly [...]
         if isinstance(data, dict):
             return data.get("positions", [])
         return data or []
@@ -256,7 +256,7 @@ class GeoRideTripsAPI:
         return True
 
     async def sonor_alarm_off(self, tracker_id: str) -> bool:
-        """Arrêter l'alarme sonore du tracker (GeoRide 3 uniquement).
+        """Stop the tracker's audible alarm (GeoRide 3 only).
 
         Endpoint: POST /tracker/{tracker_id}/sonor-alarm/off
         """

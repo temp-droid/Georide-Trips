@@ -1,23 +1,23 @@
 """GeoRide Trips binary_sensor entities.
 
-Entités créées par tracker :
+Entities created per tracker:
 
-── Alimentées par Socket.IO (temps réel) + StatusCoordinator fallback ──
-  - moving   : True si la moto est en mouvement
-  - stolen   : True si l'alarme vol est active
-  - crashed  : True si une chute est détectée
-  - locked   : True si le tracker est DÉVERROUILLÉ (convention HA LOCK)
+── Fed by Socket.IO (real-time) + StatusCoordinator fallback ──
+  - moving   : True if the motorcycle is moving
+  - stolen   : True if the theft alarm is active
+  - crashed  : True if a crash is detected
+  - locked   : True if the tracker is UNLOCKED (HA LOCK convention)
                Socket.IO event "lock" + fallback polling 5 min
-               ⚠ Inversion : GeoRide locked=True → is_on=False (verrouillé)
+               ⚠ Inversion: GeoRide locked=True → is_on=False (locked)
 
-── Alimentées par GeoRideTrackerStatusCoordinator (polling 5 min) ──
-  - online   : True si le tracker est en ligne (status == "online")
+── Fed by GeoRideTrackerStatusCoordinator (polling 5 min) ──
+  - online   : True if the tracker is online (status == "online")
 
-── Alimentées par calcul temps réel (state listeners) ──
-  - plein_requis     : autonomie ≤ seuil
-  - chaine_requise   : km restants chaîne ≤ seuil
-  - vidange_requise  : km restants vidange ≤ seuil
-  - revision_requise : km restants revision ≤ seuil OU jours ≤ 30
+── Fed by real-time computation (state listeners) ──
+  - refuel_needed     : range ≤ threshold
+  - drivetrain_due  : remaining drivetrain km ≤ threshold OR (day_interval>0 AND days ≤ 30)
+  - oil_change_due  : remaining oil-change km ≤ threshold
+  - service_due : remaining service km ≤ threshold OR days ≤ 30
 """
 
 import logging
@@ -35,7 +35,12 @@ from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    CONF_DRIVE_TYPE,
+    DEFAULT_DRIVE_TYPE,
+    DRIVETRAIN_PROFILES,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,20 +48,20 @@ _LOGGER = logging.getLogger(__name__)
 SOCKET_BINARY_SENSOR_DESCRIPTIONS = [
     {
         "key": "moving",
-        "name": "En mouvement",
+        "name": "Moving",
         "device_class": BinarySensorDeviceClass.MOTION,
         "icon_on": "mdi:motorbike",
         "icon_off": "mdi:motorbike-off",
         "socket_events": ["position", "device"],
         "payload_key": "moving",
-        # Clé dans le StatusCoordinator pour le fallback polling
+        # Key in the StatusCoordinator for the fallback polling
         "coordinator_fallback_key": "moving",
-        # Pas d'inversion : moving=True → is_on=True
+        # No inversion: moving=True → is_on=True
         "invert": False,
     },
     {
         "key": "stolen",
-        "name": "Alarme vol",
+        "name": "Theft alarm",
         "device_class": BinarySensorDeviceClass.TAMPER,
         "icon_on": "mdi:shield-alert",
         "icon_off": "mdi:shield-check",
@@ -67,7 +72,7 @@ SOCKET_BINARY_SENSOR_DESCRIPTIONS = [
     },
     {
         "key": "crashed",
-        "name": "Chute détectée",
+        "name": "Fall detected",
         "device_class": BinarySensorDeviceClass.PROBLEM,
         "icon_on": "mdi:alert-circle",
         "icon_off": "mdi:check-circle",
@@ -78,16 +83,16 @@ SOCKET_BINARY_SENSOR_DESCRIPTIONS = [
     },
     {
         "key": "locked",
-        "name": "Verrouillé",
+        "name": "Locked",
         "device_class": BinarySensorDeviceClass.LOCK,
         "icon_on": "mdi:lock-open",
         "icon_off": "mdi:lock",
         "socket_events": ["lock", "device"],
         "payload_key": "locked",
-        # Le StatusCoordinator expose "isLocked" (pas "locked")
+        # The StatusCoordinator exposes "isLocked" (not "locked")
         "coordinator_fallback_key": "isLocked",
-        # Inversion : BinarySensorDeviceClass.LOCK → is_on=True = déverrouillé
-        # GeoRide envoie locked=True quand verrouillé → is_on doit être False
+        # Inversion: BinarySensorDeviceClass.LOCK → is_on=True = unlocked
+        # GeoRide sends locked=True when locked → is_on must be False
         "invert": True,
     },
 ]
@@ -98,37 +103,47 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Créer les binary_sensors pour chaque tracker."""
+    """Create the binary_sensors for each tracker."""
     data = hass.data[DOMAIN][entry.entry_id]
     trackers = data["trackers"]
     tracker_status_coordinators = data["tracker_status_coordinators"]
+
+    profile = DRIVETRAIN_PROFILES.get(
+        entry.options.get(CONF_DRIVE_TYPE, DEFAULT_DRIVE_TYPE),
+        DRIVETRAIN_PROFILES["chain"],
+    )
 
     entities = []
     for tracker in trackers:
         tracker_id = str(tracker.get("trackerId"))
         status_coordinator = tracker_status_coordinators[tracker_id]
 
-        # Sensors Socket.IO (avec coordinator fallback optionnel)
+        # Socket.IO sensors (with optional coordinator fallback)
         for desc in SOCKET_BINARY_SENSOR_DESCRIPTIONS:
             coordinator_fallback = (
-                status_coordinator
-                if desc.get("coordinator_fallback_key")
-                else None
+                status_coordinator if desc.get("coordinator_fallback_key") else None
             )
             entities.append(
                 GeoRideBinarySensor(entry, tracker, desc, coordinator_fallback)
             )
 
-        # Sensor polling pur : online (pas d'event Socket.IO dédié)
+        # Pure polling sensor: online (no dedicated Socket.IO event)
         entities.append(GeoRideOnlineBinarySensor(status_coordinator, entry, tracker))
 
-        # Binary sensors calculés : indicateurs d'alerte entretien/carburant
-        entities.extend([
-            GeoRidePleinRequisBinarySensor(entry, tracker, hass),
-            GeoRideChaineRequiseBinarySensor(entry, tracker, hass),
-            GeoRideVidangeRequiseBinarySensor(entry, tracker, hass),
-            GeoRideRevisionRequiseBinarySensor(entry, tracker, hass),
-        ])
+        # Computed binary sensors: maintenance/fuel alert indicators
+        entities.extend(
+            [
+                GeoRidePleinRequisBinarySensor(entry, tracker, hass),
+                GeoRideVidangeRequiseBinarySensor(entry, tracker, hass),
+                GeoRideRevisionRequiseBinarySensor(entry, tracker, hass),
+            ]
+        )
+
+        # Drivetrain maintenance binary sensor — always created; label adapts
+        # to the selected drive_type.
+        entities.append(
+            GeoRideDrivetrainRequiseBinarySensor(entry, tracker, hass, profile["label"])
+        )
 
     async_add_entities(entities)
     _LOGGER.info(
@@ -142,16 +157,19 @@ async def async_setup_entry(
 # BINARY SENSORS SOCKET.IO (+ coordinator fallback)
 # ════════════════════════════════════════════════════════════════════════════
 
+
 class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
-    """Binary sensor GeoRide alimenté par Socket.IO.
+    """GeoRide binary sensor fed by Socket.IO.
 
-    Accepte un coordinator_fallback optionnel (GeoRideTrackerStatusCoordinator) :
-    à chaque polling du coordinator, l'état est synchronisé pour corriger un
-    état bloqué (ex: dernier événement Socket.IO perdu par micro-coupure réseau).
+    Accepts an optional coordinator_fallback (GeoRideTrackerStatusCoordinator):
+    on each coordinator polling, the state is synchronized to correct a
+    stuck state (e.g. last Socket.IO event lost to a brief network outage).
 
-    Supporte l'inversion de valeur via desc["invert"] pour les cas comme LOCK
-    où la convention HA est inversée par rapport au payload GeoRide.
+    Supports value inversion via desc["invert"] for cases like LOCK
+    where the HA convention is inverted relative to the GeoRide payload.
     """
+
+    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -170,13 +188,13 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
 
         self._attr_unique_id = f"{self._tracker_id}_{desc['key']}"
-        self._attr_name = f"{self._tracker_name} {desc['name']}"
+        self._attr_name = desc["name"]
         self._attr_device_class = desc["device_class"]
         self._attr_is_on = False
 
-        # Inversion pour LOCK : locked=True → is_on=False
+        # Inversion for LOCK: locked=True → is_on=False
         self._invert = desc.get("invert", False)
-        # Clé dans le coordinator data (peut différer du payload Socket.IO)
+        # Key in the coordinator data (may differ from the Socket.IO payload)
         self._coordinator_fallback_key = desc.get("coordinator_fallback_key")
 
         self._unregister_callbacks: list = []
@@ -190,21 +208,21 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self._tracker_id)},
-            name=f"{self._tracker_name} Trips",
+            name=self._tracker_name,
             manufacturer="GeoRide",
             model=self._tracker.get("model", "GeoRide Tracker"),
             sw_version=str(self._tracker.get("softwareVersion", "")),
         )
 
     async def async_added_to_hass(self) -> None:
-        """Restaurer l'état et s'abonner aux events Socket.IO."""
+        """Restore the state and subscribe to Socket.IO events."""
         await super().async_added_to_hass()
 
         if (last_state := await self.async_get_last_state()) is not None:
             if last_state.state not in (None, "unknown", "unavailable"):
                 self._attr_is_on = last_state.state == "on"
 
-        # Récupérer le socket_manager depuis hass.data (disponible ici, après setup complet)
+        # Fetch the socket_manager from hass.data (available here, after full setup)
         entry_data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         self._socket_manager = entry_data.get("socket_manager")
 
@@ -217,14 +235,16 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
                 )
                 self._unregister_callbacks.append(unregister)
 
-        # Abonnement au coordinator de statut comme filet de sécurité
+        # Subscribe to the status coordinator as a safety net
         if self._coordinator_fallback is not None:
-            self._unregister_coordinator = self._coordinator_fallback.async_add_listener(
-                self._handle_coordinator_update
+            self._unregister_coordinator = (
+                self._coordinator_fallback.async_add_listener(
+                    self._handle_coordinator_update
+                )
             )
 
     async def async_will_remove_from_hass(self) -> None:
-        """Se désenregistrer des callbacks Socket.IO et du coordinator."""
+        """Unregister from the Socket.IO callbacks and the coordinator."""
         for unregister in self._unregister_callbacks:
             unregister()
         self._unregister_callbacks.clear()
@@ -234,18 +254,18 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
             self._unregister_coordinator = None
 
     def _handle_coordinator_update(self) -> None:
-        """Filet de sécurité : synchroniser l'état depuis le StatusCoordinator.
+        """Safety net: synchronize the state from the StatusCoordinator.
 
-        Appelé à chaque polling du coordinator (toutes les 5 min).
-        Synchronise l'état du binary sensor avec la valeur du coordinator
-        pour corriger un état bloqué (ex: événement Socket.IO perdu).
+        Called on each coordinator polling (every 5 min).
+        Synchronizes the binary sensor state with the coordinator value
+        to correct a stuck state (e.g. lost Socket.IO event).
 
-        Pour "moving" : n'agit que si coordinator dit False et sensor est ON
-        (évite d'écraser un vrai mouvement confirmé par Socket.IO).
+        For "moving": only acts if the coordinator says False and the sensor is ON
+        (avoids overwriting a real movement confirmed by Socket.IO).
 
-        Pour "locked" : synchronise dans les deux sens car l'événement lock
-        peut être perdu aussi bien dans un sens que dans l'autre (verrouillage
-        depuis l'app GeoRide, béquille latérale, etc.).
+        For "locked": synchronizes both ways because the lock event
+        can be lost in either direction (locking from the GeoRide app,
+        side stand, etc.).
         """
         if not self._coordinator_fallback_key:
             return
@@ -259,21 +279,21 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
             return
 
         raw_state = bool(coordinator_value)
-        # Appliquer l'inversion si nécessaire (LOCK : isLocked=True → is_on=False)
+        # Apply the inversion if needed (LOCK: isLocked=True → is_on=False)
         new_state = (not raw_state) if self._invert else raw_state
 
         if self._desc["key"] == "moving":
-            # Moving : n'agir que pour corriger un état bloqué ON
-            # (le coordinator dit arrêté mais Socket.IO n'a pas livré moving=False)
+            # Moving: only act to correct a stuck ON state
+            # (the coordinator says stopped but Socket.IO never delivered moving=False)
             if not new_state and self._attr_is_on:
                 self._attr_is_on = False
                 self.async_write_ha_state()
                 _LOGGER.debug(
-                    "%s → OFF (fallback coordinator, Socket.IO n'avait pas livré l'état final)",
+                    "%s → OFF (coordinator fallback, Socket.IO had not delivered the final state)",
                     self._attr_name,
                 )
         else:
-            # Pour les autres (locked, etc.) : synchroniser dans les deux sens
+            # For the others (locked, etc.): synchronize both ways
             if new_state != self._attr_is_on:
                 self._attr_is_on = new_state
                 self.async_write_ha_state()
@@ -285,17 +305,19 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
                 )
 
     async def _handle_socket_event(self, data: dict) -> None:
-        """Traiter un événement Socket.IO et mettre à jour l'état."""
+        """Process a Socket.IO event and update the state."""
         payload_key = self._desc["payload_key"]
         if payload_key not in data:
             _LOGGER.debug(
-                "%s: payload_key '%s' absent dans l'événement: %s",
-                self._attr_name, payload_key, data,
+                "%s: payload_key '%s' missing from the event: %s",
+                self._attr_name,
+                payload_key,
+                data,
             )
             return
 
         raw_state = bool(data[payload_key])
-        # Appliquer l'inversion si nécessaire (LOCK : locked=True → is_on=False)
+        # Apply the inversion if needed (LOCK: locked=True → is_on=False)
         new_state = (not raw_state) if self._invert else raw_state
 
         self._attr_is_on = new_state
@@ -314,8 +336,11 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
 # BINARY SENSORS POLLING (GeoRideTrackerStatusCoordinator)
 # ════════════════════════════════════════════════════════════════════════════
 
+
 class GeoRideOnlineBinarySensor(CoordinatorEntity, BinarySensorEntity):
-    """Binary sensor : tracker en ligne (status == 'online'), mis à jour toutes les 5 min."""
+    """Binary sensor: tracker online (status == 'online'), updated every 5 min."""
+
+    _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry: ConfigEntry, tracker: dict) -> None:
         super().__init__(coordinator)
@@ -325,7 +350,7 @@ class GeoRideOnlineBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
 
         self._attr_unique_id = f"{self._tracker_id}_online"
-        self._attr_name = f"{self._tracker_name} En ligne"
+        self._attr_name = "Online"
         self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -333,7 +358,7 @@ class GeoRideOnlineBinarySensor(CoordinatorEntity, BinarySensorEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self._tracker_id)},
-            name=f"{self._tracker_name} Trips",
+            name=self._tracker_name,
             manufacturer="GeoRide",
             model=self._tracker.get("model", "GeoRide Tracker"),
             sw_version=str(self._tracker.get("softwareVersion", "")),
@@ -352,17 +377,20 @@ class GeoRideOnlineBinarySensor(CoordinatorEntity, BinarySensorEntity):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# BINARY SENSORS CALCULÉS — ALERTES ENTRETIEN / CARBURANT
+# COMPUTED BINARY SENSORS — MAINTENANCE / FUEL ALERTS
 # ════════════════════════════════════════════════════════════════════════════
 
-class _GeoRideAlerteBinarySensorBase(BinarySensorEntity):
-    """Base pour les binary sensors d'alerte entretien/carburant.
 
-    Calcule son état en temps réel à partir des sensors/numbers de l'intégration.
-    Passe OFF→ON quand le seuil est franchi, ON→OFF quand les données redeviennent OK
-    (après confirmation d'entretien/plein). Aucune logique d'anti-doublon nécessaire :
-    le blueprint utilise un trigger from='off' to='on' pour déclencher la notification.
+class _GeoRideAlerteBinarySensorBase(BinarySensorEntity):
+    """Base for the maintenance/fuel alert binary sensors.
+
+    Computes its state in real time from the integration's sensors/numbers.
+    Goes OFF→ON when the threshold is crossed, ON→OFF when the data becomes OK again
+    (after a maintenance/refuel confirmation). No anti-duplicate logic needed:
+    the blueprint uses a from='off' to='on' trigger to fire the notification.
     """
+
+    _attr_has_entity_name = True
 
     def __init__(self, entry: ConfigEntry, tracker: dict, hass: HomeAssistant) -> None:
         self._entry = entry
@@ -378,7 +406,7 @@ class _GeoRideAlerteBinarySensorBase(BinarySensorEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self.tracker_id)},
-            name=f"{self.tracker_name} Trips",
+            name=self.tracker_name,
             manufacturer="GeoRide",
             model=self._tracker.get("model", "GeoRide Tracker"),
             sw_version=str(self._tracker.get("softwareVersion", "")),
@@ -396,15 +424,15 @@ class _GeoRideAlerteBinarySensorBase(BinarySensorEntity):
         return default
 
     def _watched_entities(self) -> list[str]:
-        """Retourner la liste des entités à surveiller pour recalcul."""
+        """Return the list of entities to watch for recomputation."""
         raise NotImplementedError
 
     def _compute_is_on(self) -> bool:
-        """Calculer si l'alerte doit être active."""
+        """Compute whether the alert should be active."""
         raise NotImplementedError
 
     def _resolve_entities(self) -> None:
-        """Résoudre les entity_id via le registry. À surcharger dans les sous-classes."""
+        """Resolve the entity_ids via the registry. Override in subclasses."""
         pass
 
     async def async_added_to_hass(self) -> None:
@@ -429,33 +457,40 @@ class _GeoRideAlerteBinarySensorBase(BinarySensorEntity):
 
 
 class GeoRidePleinRequisBinarySensor(_GeoRideAlerteBinarySensorBase):
-    """Binary sensor : plein requis (autonomie_restante ≤ seuil_alerte_autonomie).
+    """Binary sensor: refuel required (remaining_range ≤ fuel_range_alert_threshold).
 
     `binary_sensor.<moto>_plein_requis`
-    Remplace switch.<moto>_faire_le_plein.
+    Replaces switch.<moto>_faire_le_plein.
     """
+
+    _attr_has_entity_name = True
 
     def __init__(self, entry, tracker, hass) -> None:
         super().__init__(entry, tracker, hass)
-        # Entity_id résolus dans async_added_to_hass
+        # Entity_ids resolved in async_added_to_hass
         self._entity_autonomie: str | None = None
         self._entity_seuil: str | None = None
-        self._attr_unique_id = f"{self.tracker_id}_plein_requis"
-        self._attr_name = f"{self.tracker_name} Plein requis"
+        self._attr_unique_id = f"{self.tracker_id}_refuel_needed"
+        self._attr_name = "Refuel needed"
         self._attr_icon = "mdi:gas-station-alert"
         self._attr_device_class = BinarySensorDeviceClass.PROBLEM
 
     def _resolve_entities(self) -> None:
         from .helpers import resolve_entity_id
+
         self._entity_autonomie = resolve_entity_id(
-            self._hass, "sensor", self.tracker_id, "autonomie_restante"
+            self._hass, "sensor", self.tracker_id, "remaining_range"
         )
         self._entity_seuil = resolve_entity_id(
-            self._hass, "number", self.tracker_id, "seuil_alerte_autonomie"
+            self._hass, "number", self.tracker_id, "fuel_range_alert_threshold"
         )
 
     def _watched_entities(self) -> list[str]:
-        return [eid for eid in [self._entity_autonomie, self._entity_seuil] if eid is not None]
+        return [
+            eid
+            for eid in [self._entity_autonomie, self._entity_seuil]
+            if eid is not None
+        ]
 
     def _compute_is_on(self) -> bool:
         autonomie = self._get_float(self._entity_autonomie, -1.0)
@@ -465,69 +500,102 @@ class GeoRidePleinRequisBinarySensor(_GeoRideAlerteBinarySensorBase):
         return autonomie <= seuil
 
 
-class GeoRideChaineRequiseBinarySensor(_GeoRideAlerteBinarySensorBase):
-    """Binary sensor : entretien chaîne requis (km_restants_chaine ≤ seuil_alerte_chaine).
+class GeoRideDrivetrainRequiseBinarySensor(_GeoRideAlerteBinarySensorBase):
+    """Binary sensor: drivetrain maintenance required (chain / shaft / belt).
 
-    `binary_sensor.<moto>_chaine_requise`
-    Remplace switch.<moto>_entretien_chaine_a_faire.
+    `binary_sensor.<moto>_drivetrain_due`
+    Dual criterion mirroring the service slot:
+      remaining_km ≤ alert_threshold OR (day_interval > 0 AND remaining_days ≤ 30).
+    When day_interval == 0 (chain/belt) only the km criterion applies.
     """
 
-    def __init__(self, entry, tracker, hass) -> None:
+    _attr_has_entity_name = True
+
+    def __init__(self, entry, tracker, hass, label="Drivetrain") -> None:
         super().__init__(entry, tracker, hass)
         self._entity_km_restants: str | None = None
-        self._entity_seuil: str | None = None
-        self._attr_unique_id = f"{self.tracker_id}_chaine_requise"
-        self._attr_name = f"{self.tracker_name} Entretien Chaîne - Requis"
+        self._entity_jours_restants: str | None = None
+        self._entity_seuil_km: str | None = None
+        self._entity_intervalle_j: str | None = None
+        self._attr_unique_id = f"{self.tracker_id}_drivetrain_due"
+        self._attr_name = f"{label} – due"
         self._attr_icon = "mdi:link-variant-plus"
         self._attr_device_class = BinarySensorDeviceClass.PROBLEM
 
     def _resolve_entities(self) -> None:
         from .helpers import resolve_entity_id
+
         self._entity_km_restants = resolve_entity_id(
-            self._hass, "sensor", self.tracker_id, "km_restants_chaine"
+            self._hass, "sensor", self.tracker_id, "drivetrain_remaining_km"
         )
-        self._entity_seuil = resolve_entity_id(
-            self._hass, "number", self.tracker_id, "seuil_alerte_chaine"
+        self._entity_jours_restants = resolve_entity_id(
+            self._hass, "sensor", self.tracker_id, "drivetrain_remaining_days"
+        )
+        self._entity_seuil_km = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "drivetrain_alert_threshold"
+        )
+        self._entity_intervalle_j = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "drivetrain_day_interval"
         )
 
     def _watched_entities(self) -> list[str]:
-        return [eid for eid in [self._entity_km_restants, self._entity_seuil] if eid is not None]
+        return [
+            eid
+            for eid in [
+                self._entity_km_restants,
+                self._entity_jours_restants,
+                self._entity_seuil_km,
+                self._entity_intervalle_j,
+            ]
+            if eid is not None
+        ]
 
     def _compute_is_on(self) -> bool:
         km_restants = self._get_float(self._entity_km_restants, 9999.0)
-        seuil = self._get_float(self._entity_seuil, 100.0)
-        if km_restants == 9999.0:  # entité non disponible
+        jours_restants = self._get_float(self._entity_jours_restants, 9999.0)
+        seuil_km = self._get_float(self._entity_seuil_km, 150.0)
+        intervalle_j = self._get_float(self._entity_intervalle_j, 0.0)
+        if km_restants == 9999.0 and jours_restants == 9999.0:
             return False
-        return km_restants <= seuil
+        alerte_km = km_restants <= seuil_km
+        alerte_jours = intervalle_j > 0 and jours_restants <= 30
+        return alerte_km or alerte_jours
 
 
 class GeoRideVidangeRequiseBinarySensor(_GeoRideAlerteBinarySensorBase):
-    """Binary sensor : vidange requise (km_restants_vidange ≤ seuil_alerte_vidange).
+    """Binary sensor: oil change required (oil_change_remaining_km ≤ oil_change_alert_threshold).
 
     `binary_sensor.<moto>_vidange_requise`
-    Remplace switch.<moto>_vidange_a_faire.
+    Replaces switch.<moto>_vidange_a_faire.
     """
+
+    _attr_has_entity_name = True
 
     def __init__(self, entry, tracker, hass) -> None:
         super().__init__(entry, tracker, hass)
         self._entity_km_restants: str | None = None
         self._entity_seuil: str | None = None
-        self._attr_unique_id = f"{self.tracker_id}_vidange_requise"
-        self._attr_name = f"{self.tracker_name} Entretien Vidange - Requise"
+        self._attr_unique_id = f"{self.tracker_id}_oil_change_due"
+        self._attr_name = "Oil change – due"
         self._attr_icon = "mdi:oil-level"
         self._attr_device_class = BinarySensorDeviceClass.PROBLEM
 
     def _resolve_entities(self) -> None:
         from .helpers import resolve_entity_id
+
         self._entity_km_restants = resolve_entity_id(
-            self._hass, "sensor", self.tracker_id, "km_restants_vidange"
+            self._hass, "sensor", self.tracker_id, "oil_change_remaining_km"
         )
         self._entity_seuil = resolve_entity_id(
-            self._hass, "number", self.tracker_id, "seuil_alerte_vidange"
+            self._hass, "number", self.tracker_id, "oil_change_alert_threshold"
         )
 
     def _watched_entities(self) -> list[str]:
-        return [eid for eid in [self._entity_km_restants, self._entity_seuil] if eid is not None]
+        return [
+            eid
+            for eid in [self._entity_km_restants, self._entity_seuil]
+            if eid is not None
+        ]
 
     def _compute_is_on(self) -> bool:
         km_restants = self._get_float(self._entity_km_restants, 9999.0)
@@ -538,37 +606,48 @@ class GeoRideVidangeRequiseBinarySensor(_GeoRideAlerteBinarySensorBase):
 
 
 class GeoRideRevisionRequiseBinarySensor(_GeoRideAlerteBinarySensorBase):
-    """Binary sensor : révision requise (km OU jours ≤ seuil).
+    """Binary sensor: service required (km OR days ≤ threshold).
 
     `binary_sensor.<moto>_revision_requise`
-    Remplace switch.<moto>_revision_a_faire.
-    Double critère : km_restants ≤ seuil_km OU jours_restants ≤ 30.
+    Replaces switch.<moto>_revision_a_faire.
+    Dual criterion: km_restants ≤ seuil_km OR jours_restants ≤ 30.
     """
+
+    _attr_has_entity_name = True
 
     def __init__(self, entry, tracker, hass) -> None:
         super().__init__(entry, tracker, hass)
         self._entity_km_restants: str | None = None
         self._entity_jours_restants: str | None = None
         self._entity_seuil_km: str | None = None
-        self._attr_unique_id = f"{self.tracker_id}_revision_requise"
-        self._attr_name = f"{self.tracker_name} Entretien Révision - Requise"
+        self._attr_unique_id = f"{self.tracker_id}_service_due"
+        self._attr_name = "Service – due"
         self._attr_icon = "mdi:wrench-clock"
         self._attr_device_class = BinarySensorDeviceClass.PROBLEM
 
     def _resolve_entities(self) -> None:
         from .helpers import resolve_entity_id
+
         self._entity_km_restants = resolve_entity_id(
-            self._hass, "sensor", self.tracker_id, "km_restants_revision"
+            self._hass, "sensor", self.tracker_id, "service_remaining_km"
         )
         self._entity_jours_restants = resolve_entity_id(
-            self._hass, "sensor", self.tracker_id, "jours_restants_revision"
+            self._hass, "sensor", self.tracker_id, "service_remaining_days"
         )
         self._entity_seuil_km = resolve_entity_id(
-            self._hass, "number", self.tracker_id, "seuil_alerte_revision"
+            self._hass, "number", self.tracker_id, "service_alert_threshold"
         )
 
     def _watched_entities(self) -> list[str]:
-        return [eid for eid in [self._entity_km_restants, self._entity_jours_restants, self._entity_seuil_km] if eid is not None]
+        return [
+            eid
+            for eid in [
+                self._entity_km_restants,
+                self._entity_jours_restants,
+                self._entity_seuil_km,
+            ]
+            if eid is not None
+        ]
 
     def _compute_is_on(self) -> bool:
         km_restants = self._get_float(self._entity_km_restants, 9999.0)

@@ -2,9 +2,9 @@
 
 DOMAIN = "georide_trips"
 
-# API REST : les endpoints vivent dans api.py (source de vérité unique).
-# Ne pas redéfinir ici — l'ancien duplicata /eco-mode/on|off contredisait
-# le PUT /eco réellement utilisé et vérifié en production.
+# REST API: the endpoints live in api.py (single source of truth).
+# Do not redefine here — the old /eco-mode/on|off duplicate contradicted
+# the PUT /eco actually used and verified in production.
 
 # Socket.IO
 SOCKETIO_URL = "https://socket.georide.com"
@@ -21,15 +21,43 @@ CONF_SOCKETIO_ENABLED = "socketio_enabled"
 CONF_TRACKER_SCAN_INTERVAL = "tracker_scan_interval"
 CONF_GPS_MIN_ACCURACY = "gps_min_accuracy"
 CONF_GPS_MIN_DISTANCE = "gps_min_distance"
+CONF_DRIVE_TYPE = "drive_type"
 
 # Default values
-DEFAULT_SCAN_INTERVAL = 3600  # 1 heure
-DEFAULT_LIFETIME_SCAN_INTERVAL = 86400  # 24 heures
+DEFAULT_SCAN_INTERVAL = 3600  # 1 hour
+DEFAULT_LIFETIME_SCAN_INTERVAL = 86400  # 24 hours
 DEFAULT_TRIPS_DAYS_BACK = 30
 DEFAULT_SOCKETIO_ENABLED = True
 DEFAULT_TRACKER_SCAN_INTERVAL = 300  # 5 minutes
-DEFAULT_GPS_MIN_ACCURACY = 0  # 0 = désactivé (aucun filtre)
-DEFAULT_GPS_MIN_DISTANCE = 10  # 10 mètres (0 = désactivé)
+DEFAULT_GPS_MIN_ACCURACY = 0  # 0 = disabled (no filter)
+DEFAULT_GPS_MIN_DISTANCE = 10  # 10 meters (0 = disabled)
+DEFAULT_DRIVE_TYPE = "chain"  # chain entities on by default
+DRIVE_TYPES = ["chain", "shaft", "belt"]
+
+# Drivetrain maintenance profiles — the single "drivetrain" maintenance slot is
+# always created; its label, default intervals and time dimension adapt to the
+# selected drive_type. day_interval == 0 means the slot is km-only (no time
+# dimension), matching chain/belt which wear by distance only.
+DRIVETRAIN_PROFILES = {
+    "chain": {
+        "label": "Chain",
+        "km_interval": 800,
+        "alert_threshold": 150,
+        "day_interval": 0,
+    },
+    "shaft": {
+        "label": "Final drive oil",
+        "km_interval": 40000,
+        "alert_threshold": 3000,
+        "day_interval": 1095,
+    },
+    "belt": {
+        "label": "Drive belt",
+        "km_interval": 16000,
+        "alert_threshold": 1500,
+        "day_interval": 0,
+    },
+}
 
 # Service attributes
 ATTR_TRACKER_ID = "tracker_id"

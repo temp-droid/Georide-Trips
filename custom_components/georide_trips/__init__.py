@@ -29,12 +29,16 @@ from .api import GeoRideApiError, GeoRideAuthError, GeoRideTripsAPI
 
 _LOGGER = logging.getLogger(__name__)
 
+# Dependency platforms (number, datetime) are listed first so their entities are
+# registered before the sensor/button/binary_sensor entities that resolve them by
+# unique_id — avoids first-boot "entity_ids not resolved" warnings after a fresh
+# install or a unique_id change.
 PLATFORMS = [
+    Platform.NUMBER,
+    Platform.DATETIME,
     Platform.SENSOR,
     Platform.BUTTON,
-    Platform.NUMBER,
     Platform.SWITCH,
-    Platform.DATETIME,
     Platform.BINARY_SENSOR,
     Platform.DEVICE_TRACKER,
 ]
@@ -100,9 +104,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     session = async_get_clientsession(hass)
     api = GeoRideTripsAPI(entry.data[CONF_EMAIL], entry.data[CONF_PASSWORD], session)
 
-    # Login + liste des trackers.
-    # Auth refusée → échec définitif (mauvais identifiants, pas de retry).
-    # Erreur transport/API → ConfigEntryNotReady pour que HA retente plus tard.
+    # Login + list of trackers.
+    # Auth rejected → permanent failure (bad credentials, no retry).
+    # Transport/API error → ConfigEntryNotReady so HA retries later.
     try:
         await api.login()
         trackers = await api.get_trackers()
@@ -159,9 +163,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         lifetime_coordinators[tracker_id] = lifetime_coordinator
         tracker_status_coordinators[tracker_id] = status_coordinator
 
-    # Premier refresh trips + status en PARALLÈLE pour tous les trackers.
-    # Le lifetime (historique complet, potentiellement des années) est différé
-    # en tâche de fond plus bas pour ne pas bloquer le setup (timeout HA).
+    # First trips + status refresh in PARALLEL for all trackers.
+    # The lifetime (full history, potentially years) is deferred to a
+    # background task below so it doesn't block setup (HA timeout).
     first_refreshes = [
         coro
         for tracker_id in coordinators
@@ -177,15 +181,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             raise ConfigEntryNotReady(
                 f"All initial refreshes failed: {failures[0]}"
             ) from failures[0]
-        # Échec partiel : on continue, le coordinator en échec retentera
-        # selon son update_interval (entités indisponibles en attendant).
+        # Partial failure: we continue, the failed coordinator will retry
+        # on its update_interval (entities unavailable in the meantime).
         for failure in failures:
             _LOGGER.warning(
                 "Initial refresh failed (will retry on schedule): %s", failure
             )
 
-    # Câbler la détection de verrouillage sur chaque coordinator récent
-    # (via StatusCoordinator polling 5 min — indépendant du Socket.IO)
+    # Wire lock detection onto each recent coordinator
+    # (via StatusCoordinator polling every 5 min — independent of Socket.IO)
     for tracker in trackers:
         tracker_id = str(tracker.get("trackerId"))
         coordinators[tracker_id].attach_status_coordinator(
@@ -195,8 +199,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "TripsCoordinators attached to StatusCoordinator (lock detection active)"
     )
 
-    # Créer le socket_manager AVANT le setup des plateformes
-    # pour que les entités puissent s'y abonner dans async_added_to_hass
+    # Create the socket_manager BEFORE setting up the platforms
+    # so entities can subscribe to it in async_added_to_hass
     socket_manager = None
     if socketio_enabled:
         from .socket_manager import GeoRideSocketManager
@@ -205,7 +209,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         socket_manager = GeoRideSocketManager(hass, api, tracker_ids)
         _LOGGER.info("GeoRide Socket.IO manager created (will start after platforms)")
 
-    # Store all data (socket_manager déjà disponible pour les entités)
+    # Store all data (socket_manager already available for entities)
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         "api": api,
@@ -214,7 +218,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinators": coordinators,
         "lifetime_coordinators": lifetime_coordinators,
         "tracker_status_coordinators": tracker_status_coordinators,
-        "socket_manager": socket_manager,  # déjà prêt pour async_added_to_hass
+        "socket_manager": socket_manager,  # already ready for async_added_to_hass
     }
 
     # Register devices
@@ -228,17 +232,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             identifiers={(DOMAIN, tracker_id)},
             manufacturer="GeoRide",
             model=tracker.get("model", "GeoRide Tracker"),
-            name=f"{tracker_name} Trips",
+            name=tracker_name,
             sw_version=str(tracker.get("softwareVersion", "")),
         )
 
-    # Setup platforms — les entités s'abonneront au socket_manager dans async_added_to_hass
+    # Setup platforms — entities will subscribe to the socket_manager in async_added_to_hass
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Premier fetch lifetime DIFFÉRÉ : séquentiel (un tracker à la fois pour
-    # ménager l'API), suivi par HA et annulé automatiquement à l'unload.
-    # Les capteurs odometer restent "unknown" (jamais 0) tant que la base
-    # lifetime n'est pas arrivée, grâce au gating _offset_ready.
+    # First lifetime fetch DEFERRED: sequential (one tracker at a time to
+    # spare the API), tracked by HA and automatically cancelled on unload.
+    # The odometer sensors stay "unknown" (never 0) until the lifetime
+    # baseline has arrived, thanks to the _offset_ready gating.
     async def _initial_lifetime_refresh() -> None:
         for lifetime_coordinator in lifetime_coordinators.values():
             await lifetime_coordinator.async_refresh()
@@ -249,22 +253,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         name="georide_trips_initial_lifetime_refresh",
     )
 
-    # Démarrer la connexion Socket.IO APRÈS le setup des plateformes
-    # (les abonnements sont en place, on peut recevoir des événements)
+    # Start the Socket.IO connection AFTER setting up the platforms
+    # (subscriptions are in place, we can receive events)
     if socket_manager is not None:
         await socket_manager.start()
         _LOGGER.info("GeoRide Socket.IO manager started")
     else:
         _LOGGER.info("GeoRide Socket.IO disabled by option")
 
-    # Services odometer — implémentés via l'entity registry et le number
-    # odometer_offset uniquement (jamais via les objets entité internes de
-    # HA, qui ne sont pas une API supportée).
+    # Odometer services — implemented via the entity registry and the
+    # odometer_offset number only (never via HA's internal entity objects,
+    # which are not a supported API).
     def _resolve_offset_entity(entity_id: str) -> str:
-        """Depuis l'entity_id du sensor real_odometer, retrouver le number offset.
+        """From the real_odometer sensor entity_id, find the offset number.
 
-        Lève HomeAssistantError si l'entité n'est pas un odometer GeoRide
-        ou si le number odometer_offset est introuvable.
+        Raises HomeAssistantError if the entity is not a GeoRide odometer
+        or if the odometer_offset number cannot be found.
         """
         from homeassistant.helpers import entity_registry as er
 
@@ -291,9 +295,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return offset_entity_id
 
     async def handle_set_odometer(call: ServiceCall):
-        """Caler l'odometer affiché sur `value` en ajustant l'offset.
+        """Set the displayed odometer to `value` by adjusting the offset.
 
-        offset_nouveau = value - (état_affiché - offset_actuel)
+        new_offset = value - (displayed_state - current_offset)
         """
         entity_id = call.data["entity_id"]
         value = call.data["value"]
@@ -334,7 +338,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     async def handle_reset_odometer(call: ServiceCall):
-        """Handle reset_odometer service — offset à 0, odometer = tracker_km seul."""
+        """Handle reset_odometer service — offset to 0, odometer = tracker_km alone."""
         entity_id = call.data["entity_id"]
         offset_entity_id = _resolve_offset_entity(entity_id)
 
@@ -353,7 +357,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         schema=RESET_ODOMETER_SCHEMA,
     )
 
-    # Register service get_trips (supports_response => résultat visible dans Developer Tools)
+    # Register service get_trips (supports_response => result visible in Developer Tools)
     async def handle_get_trips(call: ServiceCall):
         """Handle get_trips service call."""
         from datetime import datetime as dt
@@ -417,10 +421,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "trips": trips,
         }
 
-        # Fire event (pour automations)
+        # Fire event (for automations)
         hass.bus.async_fire(f"{DOMAIN}_trips_result", result)
 
-        # Retourner le résultat => affiché dans Developer Tools > Services
+        # Return the result => displayed in Developer Tools > Services
         return result
 
     from homeassistant.core import SupportsResponse
@@ -449,19 +453,19 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     _LOGGER.info("Unloading GeoRide Trips")
 
-    # Arrêter Socket.IO proprement avant le unload des plateformes
+    # Stop Socket.IO cleanly before unloading the platforms
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     socket_manager = entry_data.get("socket_manager")
     if socket_manager:
         await socket_manager.stop()
         _LOGGER.info("GeoRide Socket.IO manager stopped")
 
-    # Annuler les refreshs minuit des coordinators lifetime
+    # Cancel the midnight refreshes of the lifetime coordinators
     lifetime_coordinators = entry_data.get("lifetime_coordinators", {})
     for lifetime_coordinator in lifetime_coordinators.values():
         lifetime_coordinator.unschedule_midnight_refresh()
 
-    # Désabonner les coordinators récents du StatusCoordinator (lock detection)
+    # Unsubscribe the recent coordinators from the StatusCoordinator (lock detection)
     coordinators = entry_data.get("coordinators", {})
     for coordinator in coordinators.values():
         coordinator.detach_status_coordinator()

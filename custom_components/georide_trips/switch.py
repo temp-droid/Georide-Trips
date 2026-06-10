@@ -1,13 +1,14 @@
 """GeoRide Trips switch entities.
 
-Switches rattachés au device de chaque moto :
-- Mode éco    : reflète et contrôle isInEco via l'API GeoRide.
-- Verrouillage : reflète et contrôle isLocked via l'API GeoRide.
+Switches attached to each motorcycle's device:
+- Eco mode  : reflects and controls isInEco via the GeoRide API.
+- Lock      : reflects and controls isLocked via the GeoRide API.
 
-Note : Les indicateurs d'entretien (plein requis, chaîne, vidange, révision)
-sont désormais des binary_sensor calculés en temps réel (read-only).
-Voir binary_sensor.py : GeoRidePleinRequisBinarySensor, etc.
+Note: The maintenance indicators (refuel required, drivetrain, oil change, service)
+are now binary_sensors computed in real time (read-only).
+See binary_sensor.py: GeoRidePleinRequisBinarySensor, etc.
 """
+
 import logging
 
 from homeassistant.components.switch import SwitchEntity
@@ -37,21 +38,25 @@ async def async_setup_entry(
     for tracker in trackers:
         tracker_id = str(tracker.get("trackerId"))
         status_coordinator = tracker_status_coordinators[tracker_id]
-        entities.extend([
-            GeoRideEcoModeSwitch(status_coordinator, entry, tracker, api),
-            GeoRideLockSwitch(status_coordinator, entry, tracker, api),
-        ])
+        entities.extend(
+            [
+                GeoRideEcoModeSwitch(status_coordinator, entry, tracker, api),
+                GeoRideLockSwitch(status_coordinator, entry, tracker, api),
+            ]
+        )
 
     async_add_entities(entities)
     _LOGGER.info("Added %d switches for %d trackers", len(entities), len(trackers))
 
 
 class GeoRideEcoModeSwitch(CoordinatorEntity, SwitchEntity):
-    """Switch pour activer/désactiver le mode éco du tracker GeoRide.
+    """Switch to enable/disable the GeoRide tracker's eco mode.
 
-    L'état est lu depuis le GeoRideTrackerStatusCoordinator (polling /user/trackers).
-    Le changement est envoyé via PUT /tracker/{id}/eco.
+    The state is read from the GeoRideTrackerStatusCoordinator (polling /user/trackers).
+    The change is sent via PUT /tracker/{id}/eco.
     """
+
+    _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry: ConfigEntry, tracker: dict, api) -> None:
         super().__init__(coordinator)
@@ -61,7 +66,7 @@ class GeoRideEcoModeSwitch(CoordinatorEntity, SwitchEntity):
         self._tracker_id = str(tracker.get("trackerId"))
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
         self._attr_unique_id = f"{self._tracker_id}_eco_mode"
-        self._attr_name = f"{self._tracker_name} Mode éco"
+        self._attr_name = "Eco mode"
         self._attr_icon = "mdi:leaf"
         self._attr_entity_category = None
 
@@ -69,7 +74,7 @@ class GeoRideEcoModeSwitch(CoordinatorEntity, SwitchEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self._tracker_id)},
-            name=f"{self._tracker_name} Trips",
+            name=self._tracker_name,
             manufacturer="GeoRide",
             model=self._tracker.get("model", "GeoRide Tracker"),
             sw_version=str(self._tracker.get("softwareVersion", "")),
@@ -87,25 +92,27 @@ class GeoRideEcoModeSwitch(CoordinatorEntity, SwitchEntity):
         return "mdi:leaf" if self.is_on else "mdi:leaf-off"
 
     async def async_turn_on(self, **kwargs) -> None:
-        """Activer le mode éco."""
+        """Enable eco mode."""
         success = await self._api.set_eco_mode(self._tracker_id, True)
         if success:
             await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs) -> None:
-        """Désactiver le mode éco."""
+        """Disable eco mode."""
         success = await self._api.set_eco_mode(self._tracker_id, False)
         if success:
             await self.coordinator.async_request_refresh()
 
 
 class GeoRideLockSwitch(CoordinatorEntity, SwitchEntity):
-    """Switch pour verrouiller/déverrouiller le tracker GeoRide.
+    """Switch to lock/unlock the GeoRide tracker.
 
-    L'état est lu depuis le GeoRideTrackerStatusCoordinator (champ `isLocked`).
-    Le basculement est envoyé via POST /tracker/{id}/toggleLock.
-    On = verrouillé, Off = déverrouillé.
+    The state is read from the GeoRideTrackerStatusCoordinator (`isLocked` field).
+    The toggle is sent via POST /tracker/{id}/toggleLock.
+    On = locked, Off = unlocked.
     """
+
+    _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry: ConfigEntry, tracker: dict, api) -> None:
         super().__init__(coordinator)
@@ -115,7 +122,7 @@ class GeoRideLockSwitch(CoordinatorEntity, SwitchEntity):
         self._tracker_id = str(tracker.get("trackerId"))
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
         self._attr_unique_id = f"{self._tracker_id}_lock"
-        self._attr_name = f"{self._tracker_name} Verrouillage"
+        self._attr_name = "Lock"
         self._attr_icon = "mdi:lock"
         self._attr_entity_category = None
 
@@ -123,7 +130,7 @@ class GeoRideLockSwitch(CoordinatorEntity, SwitchEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self._tracker_id)},
-            name=f"{self._tracker_name} Trips",
+            name=self._tracker_name,
             manufacturer="GeoRide",
             model=self._tracker.get("model", "GeoRide Tracker"),
             sw_version=str(self._tracker.get("softwareVersion", "")),
@@ -141,7 +148,7 @@ class GeoRideLockSwitch(CoordinatorEntity, SwitchEntity):
         return "mdi:lock" if self.is_on else "mdi:lock-open-variant"
 
     async def _toggle_if_needed(self, target_locked: bool) -> None:
-        """Appelle toggleLock seulement si l'état actuel diffère de la cible."""
+        """Call toggleLock only if the current state differs from the target."""
         current = self.is_on
         if current is None or current != target_locked:
             new_state = await self._api.toggle_lock(self._tracker_id)
@@ -155,9 +162,9 @@ class GeoRideLockSwitch(CoordinatorEntity, SwitchEntity):
             )
 
     async def async_turn_on(self, **kwargs) -> None:
-        """Verrouiller le tracker."""
+        """Lock the tracker."""
         await self._toggle_if_needed(True)
 
     async def async_turn_off(self, **kwargs) -> None:
-        """Déverrouiller le tracker."""
+        """Unlock the tracker."""
         await self._toggle_if_needed(False)

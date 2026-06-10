@@ -1,48 +1,50 @@
 """GeoRide Trips number entities.
 
-Entités number rattachées au device de chaque moto :
+number entities attached to each motorcycle's device:
 
-── Carburant ──────────────────────────────────────────────────────
-- autonomie_totale              : km théoriques sur un plein (config)
-- seuil_alerte_autonomie        : km restants pour déclencher l'alerte (config)
-- km_dernier_plein              : snapshot odometer au dernier plein
-- km_restants_avant_plein       : autonomie restante calculée (diagnostic)
-- km_plein_hist_1/2/3           : historique FIFO des 3 dernières distances inter-plein
-- autonomie_moyenne_calculee    : moyenne glissante sur 3 pleins (diagnostic)
-- nb_pleins_enregistres         : compteur de pleins confirmés
+── Fuel ────────────────────────────────────────────────────────────
+- fuel_total_range              : theoretical km on a full tank (config)
+- fuel_range_alert_threshold        : remaining km to trigger the alert (config)
+- fuel_km_at_last_refuel              : odometer snapshot at the last refuel
+- km_restants_avant_plein       : computed remaining range (diagnostic)
+- fuel_distance_between_refuels_1/2/3           : FIFO history of the last 3 inter-refuel distances
+- fuel_calculated_average_range    : rolling average over 3 refuels (diagnostic)
+- fuel_recorded_refuel_count         : counter of confirmed refuels
 
-── Kilométrage périodique ─────────────────────────────────────────
-- km_debut_journee              : snapshot odometer à minuit (diagnostic)
-- km_debut_semaine              : snapshot odometer lundi minuit (diagnostic)
-- km_debut_mois                 : snapshot odometer au 1er du mois (diagnostic)
-  → km_journaliers / km_hebdomadaires / km_mensuels : calculés en Python (sensor.py)
-  → Les snapshots sont mis à jour automatiquement à minuit par MidnightSnapshotManager (sensor.py)
+── Periodic mileage ───────────────────────────────────────────────
+- odometer_at_day_start              : odometer snapshot at midnight (diagnostic)
+- odometer_at_week_start              : odometer snapshot Monday midnight (diagnostic)
+- odometer_at_month_start                 : odometer snapshot on the 1st of the month (diagnostic)
+  → daily_mileage / weekly_mileage / monthly_mileage : computed in Python (sensor.py)
+  → The snapshots are updated automatically at midnight by MidnightSnapshotManager (sensor.py)
 
-── Entretien Chaîne ──────────────────────────────────────────────
-- intervalle_km_chaine          : km entre deux entretiens (config)
-- seuil_alerte_chaine           : km avant échéance pour alerter (config)
-- km_dernier_entretien_chaine   : snapshot odometer au dernier entretien (config)
-- km_restants_chaine            : km restants avant échéance (diagnostic)
+── Drivetrain maintenance (adaptive: chain / shaft / belt) ───────
+- drivetrain_km_interval         : km between two maintenances (config)
+- drivetrain_day_interval        : max days between maintenances (config, 0 = km-only)
+- drivetrain_alert_threshold     : km before due to alert (config)
+- drivetrain_km_at_last_service  : odometer snapshot at the last maintenance (config)
+- drivetrain_remaining_km        : km remaining before due (diagnostic)
 
-── Entretien Vidange ─────────────────────────────────────────────
-- intervalle_km_vidange         : km entre deux vidanges (config)
-- seuil_alerte_vidange          : km avant échéance pour alerter (config)
-- km_dernier_entretien_vidange  : snapshot odometer à la dernière vidange (config)
-- km_restants_vidange           : km restants avant échéance (diagnostic)
+── Oil change maintenance ────────────────────────────────────────
+- oil_change_km_interval         : km between two oil changes (config)
+- oil_change_alert_threshold          : km before due to alert (config)
+- oil_change_km_at_last_oil_change  : odometer snapshot at the last oil change (config)
+- oil_change_remaining_km           : km remaining before due (diagnostic)
 
-── Entretien Révision ────────────────────────────────────────────
-- intervalle_km_revision            : km entre deux révisions (config)
-- intervalle_jours_revision         : jours max entre révisions (config)
-- seuil_alerte_revision             : km avant échéance pour alerter (config)
-- km_dernier_entretien_revision     : snapshot odometer à la dernière révision (config)
-- km_restants_avant_entretien_revision : km restants avant échéance (diagnostic)
+── Service maintenance ───────────────────────────────────────────
+- service_km_interval            : km between two services (config)
+- service_day_interval         : max days between services (config)
+- service_alert_threshold             : km before due to alert (config)
+- service_km_at_last_service     : odometer snapshot at the last service (config)
+- km_restants_avant_entretien_revision : km remaining before due (diagnostic)
 
-── Trajets ───────────────────────────────────────────────────────
-- seuil_distance_trajet         : distance minimale pour notifier (config)
+── Trips ──────────────────────────────────────────────────────────
+- trip_notification_threshold         : minimum distance to notify (config)
 
 ── Offset ────────────────────────────────────────────────────────
-- odometer_offset               : décalage kilométrage (km avant tracker)
+- odometer_offset               : mileage offset (km already on the tracker)
 """
+
 import logging
 
 from homeassistant.components.number import NumberEntity, NumberMode
@@ -53,7 +55,12 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    CONF_DRIVE_TYPE,
+    DEFAULT_DRIVE_TYPE,
+    DRIVETRAIN_PROFILES,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,226 +68,336 @@ STORAGE_VERSION = 1
 STORAGE_KEY = "georide_trips_numbers"
 
 NUMBER_DESCRIPTIONS = [
-
     # ── Odometer offset ───────────────────────────────────────────────────────
     {
         "key": "odometer_offset",
-        "name": "Odometer Offset",
+        "name": "Odometer offset",
         "icon": "mdi:plus-circle",
         "unit": UnitOfLength.KILOMETERS,
-        "min": -100_000, "max": 100_000, "step": 0.1, "default": 0,
+        "min": -100_000,
+        "max": 100_000,
+        "step": 0.1,
+        "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.CONFIG,
     },
-
-    # ── Carburant ─────────────────────────────────────────────────────────────
+    # ── Fuel ──────────────────────────────────────────────────────────────────
     {
-        "key": "autonomie_totale",
-        "name": "Carburant - Autonomie totale",
+        "key": "fuel_total_range",
+        "name": "Fuel – total range",
         "icon": "mdi:gas-station",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 50, "max": 800, "step": 1, "default": 150,
+        "min": 50,
+        "max": 800,
+        "step": 1,
+        "default": 150,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.CONFIG,
     },
     {
-        "key": "seuil_alerte_autonomie",
-        "name": "Carburant - Seuil alerte autonomie",
+        "key": "fuel_range_alert_threshold",
+        "name": "Fuel – range alert threshold",
         "icon": "mdi:alert-circle",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 200, "step": 5, "default": 30,
+        "min": 0,
+        "max": 200,
+        "step": 5,
+        "default": 30,
         "mode": NumberMode.SLIDER,
         "entity_category": EntityCategory.CONFIG,
     },
     {
-        "key": "km_dernier_plein",
-        "name": "Carburant - KM au dernier plein",
+        "key": "fuel_km_at_last_refuel",
+        "name": "Fuel – km at last refuel",
         "icon": "mdi:gas-station-outline",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 200_000, "step": 0.1, "default": 0,
+        "min": 0,
+        "max": 200_000,
+        "step": 0.1,
+        "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.CONFIG,
     },
-    # ── Moyenne glissante pleins ──────────────────────────────────────────────
+    # ── Rolling average of refuels ────────────────────────────────────────────
     {
-        "key": "km_plein_hist_1",
-        "name": "Carburant - Distance inter-plein (plein n-1)",
+        "key": "fuel_distance_between_refuels_1",
+        "name": "Fuel – distance between refuels (n-1)",
         "icon": "mdi:gas-station",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 1_500, "step": 0.1, "default": 0,
+        "min": 0,
+        "max": 1_500,
+        "step": 0.1,
+        "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
     {
-        "key": "km_plein_hist_2",
-        "name": "Carburant - Distance inter-plein (plein n-2)",
+        "key": "fuel_distance_between_refuels_2",
+        "name": "Fuel – distance between refuels (n-2)",
         "icon": "mdi:gas-station",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 1_500, "step": 0.1, "default": 0,
+        "min": 0,
+        "max": 1_500,
+        "step": 0.1,
+        "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
     {
-        "key": "km_plein_hist_3",
-        "name": "Carburant - Distance inter-plein (plein n-3)",
+        "key": "fuel_distance_between_refuels_3",
+        "name": "Fuel – distance between refuels (n-3)",
         "icon": "mdi:gas-station",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 1_500, "step": 0.1, "default": 0,
+        "min": 0,
+        "max": 1_500,
+        "step": 0.1,
+        "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
     {
-        "key": "autonomie_moyenne_calculee",
-        "name": "Carburant - Autonomie moyenne calculée",
+        "key": "fuel_calculated_average_range",
+        "name": "Fuel – calculated average range",
         "icon": "mdi:gas-station-outline",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 1_500, "step": 1, "default": 0,
+        "min": 0,
+        "max": 1_500,
+        "step": 1,
+        "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
     {
-        "key": "nb_pleins_enregistres",
-        "name": "Carburant - Nombre de pleins enregistrés",
+        "key": "fuel_recorded_refuel_count",
+        "name": "Fuel – recorded refuel count",
         "icon": "mdi:counter",
         "unit": None,
-        "min": 0, "max": 9_999, "step": 1, "default": 0,
+        "min": 0,
+        "max": 9_999,
+        "step": 1,
+        "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
-
-    # ── Kilométrage périodique ─────────────────────────────────────────────────
+    # ── Periodic mileage ────────────────────────────────────────────────────────
     {
-        "key": "km_debut_journee",
-        "name": "KM début journée",
+        "key": "odometer_at_day_start",
+        "name": "Odometer at day start",
         "icon": "mdi:clock-start",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 200_000, "step": 0.1, "default": 0,
+        "min": 0,
+        "max": 200_000,
+        "step": 0.1,
+        "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
     {
-        "key": "km_debut_semaine",
-        "name": "KM début semaine",
+        "key": "odometer_at_week_start",
+        "name": "Odometer at week start",
         "icon": "mdi:calendar-week",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 200_000, "step": 0.1, "default": 0,
+        "min": 0,
+        "max": 200_000,
+        "step": 0.1,
+        "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
     {
-        "key": "km_debut_mois",
-        "name": "KM début mois",
+        "key": "odometer_at_month_start",
+        "name": "Odometer at month start",
         "icon": "mdi:calendar-month",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 200_000, "step": 0.1, "default": 0,
+        "min": 0,
+        "max": 200_000,
+        "step": 0.1,
+        "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
-
-    # ── Entretien Chaîne ──────────────────────────────────────────────────────
+    # ── Drivetrain maintenance (adaptive: chain / shaft / belt) ───────────────
+    # name/default values are overridden per config entry from the active
+    # DRIVETRAIN_PROFILE in async_setup_entry (see _drivetrain_overrides()).
     {
-        "key": "intervalle_km_chaine",
-        "name": "Entretien Chaîne - Intervalle km",
+        "key": "drivetrain_km_interval",
+        "name": "Drivetrain – km interval",
         "icon": "mdi:link-variant",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 100, "max": 10_000, "step": 100, "default": 500,
+        "min": 100,
+        "max": 60_000,
+        "step": 100,
+        "default": 800,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.CONFIG,
     },
     {
-        "key": "seuil_alerte_chaine",
-        "name": "Entretien Chaîne - Seuil alerte",
-        "icon": "mdi:link-variant-remove",
-        "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 500, "step": 50, "default": 100,
-        "mode": NumberMode.SLIDER,
-        "entity_category": EntityCategory.CONFIG,
-    },
-    {
-        "key": "km_dernier_entretien_chaine",
-        "name": "Entretien Chaîne - KM au dernier entretien",
-        "icon": "mdi:link-variant-plus",
-        "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 200_000, "step": 0.1, "default": 0,
-        "mode": NumberMode.BOX,
-        "entity_category": EntityCategory.CONFIG,
-    },
-    # ── Entretien Révision ────────────────────────────────────────────────────
-    {
-        "key": "intervalle_km_revision",
-        "name": "Entretien Révision - Intervalle km",
-        "icon": "mdi:wrench-clock",
-        "unit": UnitOfLength.KILOMETERS,
-        "min": 1_000, "max": 50_000, "step": 500, "default": 6_000,
-        "mode": NumberMode.BOX,
-        "entity_category": EntityCategory.CONFIG,
-    },
-    {
-        "key": "intervalle_jours_revision",
-        "name": "Entretien Révision - Intervalle jours",
+        "key": "drivetrain_day_interval",
+        "name": "Drivetrain – day interval",
         "icon": "mdi:calendar-clock",
         "unit": "d",
-        "min": 30, "max": 730, "step": 30, "default": 365,
+        "min": 0,
+        "max": 2_000,
+        "step": 30,
+        "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.CONFIG,
     },
     {
-        "key": "seuil_alerte_revision",
-        "name": "Entretien Révision - Seuil alerte",
+        "key": "drivetrain_alert_threshold",
+        "name": "Drivetrain – alert threshold",
+        "icon": "mdi:link-variant-remove",
+        "unit": UnitOfLength.KILOMETERS,
+        "min": 0,
+        "max": 5_000,
+        "step": 50,
+        "default": 150,
+        "mode": NumberMode.SLIDER,
+        "entity_category": EntityCategory.CONFIG,
+    },
+    {
+        "key": "drivetrain_km_at_last_service",
+        "name": "Drivetrain – km at last service",
+        "icon": "mdi:link-variant-plus",
+        "unit": UnitOfLength.KILOMETERS,
+        "min": 0,
+        "max": 200_000,
+        "step": 0.1,
+        "default": 0,
+        "mode": NumberMode.BOX,
+        "entity_category": EntityCategory.CONFIG,
+    },
+    # ── Service maintenance ───────────────────────────────────────────────────
+    {
+        "key": "service_km_interval",
+        "name": "Service – km interval",
+        "icon": "mdi:wrench-clock",
+        "unit": UnitOfLength.KILOMETERS,
+        "min": 1_000,
+        "max": 50_000,
+        "step": 500,
+        "default": 6_000,
+        "mode": NumberMode.BOX,
+        "entity_category": EntityCategory.CONFIG,
+    },
+    {
+        "key": "service_day_interval",
+        "name": "Service – day interval",
+        "icon": "mdi:calendar-clock",
+        "unit": "d",
+        "min": 30,
+        "max": 730,
+        "step": 30,
+        "default": 365,
+        "mode": NumberMode.BOX,
+        "entity_category": EntityCategory.CONFIG,
+    },
+    {
+        "key": "service_alert_threshold",
+        "name": "Service – alert threshold",
         "icon": "mdi:wrench-outline",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 2_000, "step": 100, "default": 500,
+        "min": 0,
+        "max": 2_000,
+        "step": 100,
+        "default": 500,
         "mode": NumberMode.SLIDER,
         "entity_category": EntityCategory.CONFIG,
     },
     {
-        "key": "km_dernier_entretien_revision",
-        "name": "Entretien Révision - KM à la dernière révision",
+        "key": "service_km_at_last_service",
+        "name": "Service – km at last service",
         "icon": "mdi:wrench-check",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 200_000, "step": 0.1, "default": 0,
+        "min": 0,
+        "max": 200_000,
+        "step": 0.1,
+        "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.CONFIG,
     },
-    # ── Entretien Vidange ─────────────────────────────────────────────────────
+    # ── Oil change maintenance ────────────────────────────────────────────────
     {
-        "key": "intervalle_km_vidange",
-        "name": "Entretien Vidange - Intervalle km",
+        "key": "oil_change_km_interval",
+        "name": "Oil change – km interval",
         "icon": "mdi:oil",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 1_000, "max": 50_000, "step": 500, "default": 6_000,
+        "min": 1_000,
+        "max": 50_000,
+        "step": 500,
+        "default": 6_000,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.CONFIG,
     },
     {
-        "key": "seuil_alerte_vidange",
-        "name": "Entretien Vidange - Seuil alerte",
+        "key": "oil_change_alert_threshold",
+        "name": "Oil change – alert threshold",
         "icon": "mdi:oil-level",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 2_000, "step": 100, "default": 500,
+        "min": 0,
+        "max": 2_000,
+        "step": 100,
+        "default": 500,
         "mode": NumberMode.SLIDER,
         "entity_category": EntityCategory.CONFIG,
     },
     {
-        "key": "km_dernier_entretien_vidange",
-        "name": "Entretien Vidange - KM à la dernière vidange",
+        "key": "oil_change_km_at_last_oil_change",
+        "name": "Oil change – km at last oil change",
         "icon": "mdi:oil-check",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 200_000, "step": 0.1, "default": 0,
+        "min": 0,
+        "max": 200_000,
+        "step": 0.1,
+        "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.CONFIG,
     },
-    # ── Trajets ───────────────────────────────────────────────────────────────
+    # ── Trips ─────────────────────────────────────────────────────────────────
     {
-        "key": "seuil_distance_trajet",
-        "name": "Seuil notification trajet",
+        "key": "trip_notification_threshold",
+        "name": "Trip notification threshold",
         "icon": "mdi:map-marker-path",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 50, "step": 0.5, "default": 2,
+        "min": 0,
+        "max": 50,
+        "step": 0.5,
+        "default": 2,
         "mode": NumberMode.SLIDER,
         "entity_category": EntityCategory.CONFIG,
     },
 ]
+
+
+def _drivetrain_overrides(profile: dict) -> dict:
+    """Build per-key NUMBER_DESCRIPTIONS overrides from the active drivetrain profile.
+
+    Adapts the drivetrain numbers' display label and default values to the
+    selected drive_type (chain / shaft / belt). km_at_last keeps default 0.
+    """
+    label = profile["label"]
+    base = {d["key"]: d for d in NUMBER_DESCRIPTIONS}
+    return {
+        "drivetrain_km_interval": {
+            **base["drivetrain_km_interval"],
+            "name": f"{label} – km interval",
+            "default": profile["km_interval"],
+        },
+        "drivetrain_day_interval": {
+            **base["drivetrain_day_interval"],
+            "name": f"{label} – day interval",
+            "default": profile["day_interval"],
+        },
+        "drivetrain_alert_threshold": {
+            **base["drivetrain_alert_threshold"],
+            "name": f"{label} – alert threshold",
+            "default": profile["alert_threshold"],
+        },
+        "drivetrain_km_at_last_service": {
+            **base["drivetrain_km_at_last_service"],
+            "name": f"{label} – km at last service",
+        },
+    }
 
 
 async def async_setup_entry(
@@ -292,15 +409,24 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     trackers = data["trackers"]
 
-    # Store partagé pour toutes les entités number de cette config entry.
-    # Écrit sur disque immédiatement à chaque set_value → survit aux redémarrages.
+    # Store shared by all number entities of this config entry.
+    # Written to disk immediately on each set_value → survives restarts.
     store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}_{entry.entry_id}")
     stored_data: dict = await store.async_load() or {}
+
+    profile = DRIVETRAIN_PROFILES.get(
+        entry.options.get(CONF_DRIVE_TYPE, DEFAULT_DRIVE_TYPE),
+        DRIVETRAIN_PROFILES["chain"],
+    )
+    overrides = _drivetrain_overrides(profile)
 
     entities = []
     for tracker in trackers:
         for desc in NUMBER_DESCRIPTIONS:
-            entities.append(GeoRideNumberEntity(entry, tracker, desc, store, stored_data))
+            desc = overrides.get(desc["key"], desc)
+            entities.append(
+                GeoRideNumberEntity(entry, tracker, desc, store, stored_data)
+            )
 
     async_add_entities(entities)
     _LOGGER.info(
@@ -311,12 +437,14 @@ async def async_setup_entry(
 
 
 class GeoRideNumberEntity(NumberEntity):
-    """Entité number persistante rattachée au device GeoRide.
+    """Persistent number entity attached to the GeoRide device.
 
-    Utilise homeassistant.helpers.storage.Store au lieu de RestoreEntity :
-    chaque modification est écrite sur disque immédiatement (async_delay=0),
-    ce qui garantit la survie des valeurs même en cas de redémarrage brutal.
+    Uses homeassistant.helpers.storage.Store instead of RestoreEntity:
+    each change is written to disk immediately (async_delay=0),
+    which guarantees the values survive even on an abrupt restart.
     """
+
+    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -335,19 +463,21 @@ class GeoRideNumberEntity(NumberEntity):
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
 
         self._attr_unique_id = f"{self._tracker_id}_{desc['key']}"
-        self._attr_name = f"{self._tracker_name} {desc['name']}"
+        self._attr_name = desc["name"]
         self._attr_icon = desc["icon"]
-        self._attr_native_unit_of_measurement = desc.get("unit", UnitOfLength.KILOMETERS)
+        self._attr_native_unit_of_measurement = desc.get(
+            "unit", UnitOfLength.KILOMETERS
+        )
         self._attr_mode = desc["mode"]
         self._attr_native_min_value = float(desc["min"])
         self._attr_native_max_value = float(desc["max"])
         self._attr_native_step = float(desc["step"])
         self._attr_entity_category = desc.get("entity_category")
 
-        # Clé de stockage unique par entité
+        # Storage key unique per entity
         self._storage_key = f"{self._tracker_id}_{desc['key']}"
 
-        # Restaurer depuis le Store (chargé avant la création des entités)
+        # Restore from the Store (loaded before the entities are created)
         default = float(desc["default"])
         raw = stored_data.get(self._storage_key)
         try:
@@ -359,7 +489,7 @@ class GeoRideNumberEntity(NumberEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self._tracker_id)},
-            name=f"{self._tracker_name} Trips",
+            name=self._tracker_name,
             manufacturer="GeoRide",
             model=self._tracker.get("model", "GeoRide Tracker"),
             sw_version=str(self._tracker.get("softwareVersion", "")),
@@ -368,18 +498,20 @@ class GeoRideNumberEntity(NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         self._attr_native_value = value
         self.async_write_ha_state()
-        # Persister immédiatement sur disque
+        # Persist to disk immediately
         await self._persist(value)
         _LOGGER.debug("Set %s for %s: %s", self._desc["key"], self._tracker_name, value)
 
     async def _persist(self, value: float) -> None:
-        """Écrire la valeur dans le Store (disque) immédiatement."""
+        """Write the value to the Store (disk) immediately."""
         try:
             current: dict = await self._store.async_load() or {}
             current[self._storage_key] = value
             await self._store.async_save(current)
         except Exception as err:
             _LOGGER.error(
-                "Impossible de persister %s pour %s : %s",
-                self._desc["key"], self._tracker_name, err,
+                "Failed to persist %s for %s: %s",
+                self._desc["key"],
+                self._tracker_name,
+                err,
             )

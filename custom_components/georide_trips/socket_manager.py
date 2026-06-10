@@ -1,33 +1,33 @@
-"""GeoRide Socket.IO Manager — connexion temps réel persistante.
+"""GeoRide Socket.IO Manager — persistent real-time connection.
 
-Gère une connexion Socket.IO unique par intégration (entrée de config),
-partagée entre tous les trackers du compte.
+Manages a single Socket.IO connection per integration (config entry),
+shared across all trackers of the account.
 
-Événements reçus du serveur GeoRide :
-  - "position"  : lat/lon/speed/heading/moving — mise à jour device_tracker
-  - "device"    : moving/stolen/crashed/batteries — mise à jour binary_sensors + fire georide_device_event
-  - "alarm"     : type d'alarme — fire HA event georide_alarm_event
-  - "lock"      : état verrou — fire HA event georide_lock_event
+Events received from the GeoRide server:
+  - "position"  : lat/lon/speed/heading/moving — device_tracker update
+  - "device"    : moving/stolen/crashed/batteries — binary_sensors update + fire georide_device_event
+  - "alarm"     : alarm type — fire HA event georide_alarm_event
+  - "lock"      : lock state — fire HA event georide_lock_event
 
-Événements HA bus publiés (compatibles doc GeorideHA) :
+HA bus events published (compatible with the GeorideHA docs):
   - georide_device_event  : data.device_id, data.device_name, data.moving, data.stolen, data.crashed
   - georide_alarm_event   : data.device_id, data.device_name, data.type
   - georide_lock_event    : data.device_id, data.device_name, data.locked
 
-  Filtrer par data.device_id == XX (XX = tracker_id)
+  Filter by data.device_id == XX (XX = tracker_id)
 
-Types d'alarmes disponibles (georide_alarm_event, data.type) :
+Available alarm types (georide_alarm_event, data.type):
   alarm_vibration, alarm_exitZone, alarm_crash, alarm_crashParking,
   alarm_deviceOffline, alarm_deviceOnline, alarm_powerCut, alarm_powerUncut,
   alarm_batteryWarning, alarm_temperatureWarning, alarm_magnetOn, alarm_magnetOff,
   alarm_sonorAlarmOn
 
-Architecture :
+Architecture:
   GeoRideSocketManager
-    ├── connexion Socket.IO (python-socketio AsyncClient)
-    ├── reconnexion automatique (backoff exponentiel)
-    ├── dict de callbacks par tracker_id
-    └── dispatch vers entités HA via hass.loop
+    ├── Socket.IO connection (python-socketio AsyncClient)
+    ├── automatic reconnection (exponential backoff)
+    ├── dict of callbacks per tracker_id
+    └── dispatch to HA entities via hass.loop
 """
 
 import asyncio
@@ -39,35 +39,35 @@ from .const import SOCKETIO_URL
 
 _LOGGER = logging.getLogger(__name__)
 
-# Délai initial de reconnexion (secondes), doublé à chaque tentative
+# Initial reconnection delay (seconds), doubled on each attempt
 RECONNECT_DELAY_INITIAL = 5
 RECONNECT_DELAY_MAX = 300  # 5 minutes max
 
 
 class GeoRideSocketManager:
-    """Gestionnaire de connexion Socket.IO GeoRide.
+    """GeoRide Socket.IO connection manager.
 
-    Instancié une fois par entrée de config (compte GeoRide).
-    Gère tous les trackers du compte sur une seule connexion.
+    Instantiated once per config entry (GeoRide account).
+    Manages all trackers of the account over a single connection.
     """
 
     def __init__(self, hass, api, tracker_ids: list[str]) -> None:
-        """Initialiser le manager.
+        """Initialize the manager.
 
         Args:
-            hass: instance Home Assistant
-            api: GeoRideTripsAPI (déjà authentifiée)
-            tracker_ids: liste des tracker IDs à suivre
+            hass: Home Assistant instance
+            api: GeoRideTripsAPI (already authenticated)
+            tracker_ids: list of tracker IDs to follow
         """
         self._hass = hass
         self._api = api
         self._tracker_ids = tracker_ids
 
-        # Callbacks enregistrés par les entités
-        # structure : {tracker_id: {event_name: [callback, ...]}}
+        # Callbacks registered by the entities
+        # structure: {tracker_id: {event_name: [callback, ...]}}
         self._callbacks: Dict[str, Dict[str, list[Callable]]] = {}
 
-        # État de la connexion
+        # Connection state
         self._sio = None
         self._connected = False
         self._should_run = False
@@ -84,10 +84,10 @@ class GeoRideSocketManager:
         event_name: str,
         callback: Callable[[Dict[str, Any]], None],
     ) -> Callable:
-        """Enregistrer un callback pour un événement d'un tracker.
+        """Register a callback for an event of a tracker.
 
         Returns:
-            Fonction de désenregistrement (à appeler dans async_will_remove_from_hass)
+            Unregister function (to call in async_will_remove_from_hass)
         """
         self._callbacks.setdefault(tracker_id, {}).setdefault(event_name, [])
         self._callbacks[tracker_id][event_name].append(callback)
@@ -105,15 +105,15 @@ class GeoRideSocketManager:
 
     @property
     def connected(self) -> bool:
-        """True si Socket.IO est actuellement connecté."""
+        """True if Socket.IO is currently connected."""
         return self._connected
 
     async def start(self) -> None:
-        """Démarrer la connexion Socket.IO (appelé depuis async_setup_entry).
+        """Start the Socket.IO connection (called from async_setup_entry).
 
-        async_create_background_task (et non hass.loop.create_task) : la tâche
-        est suivie par HA et annulée à l'arrêt — sinon la boucle de reconnexion
-        peut survivre au unload ("Task was destroyed but it is pending").
+        async_create_background_task (rather than hass.loop.create_task): the task
+        is tracked by HA and cancelled on shutdown — otherwise the reconnection
+        loop can survive the unload ("Task was destroyed but it is pending").
         """
         self._should_run = True
         self._reconnect_task = self._hass.async_create_background_task(
@@ -124,7 +124,7 @@ class GeoRideSocketManager:
         )
 
     async def stop(self) -> None:
-        """Arrêter proprement la connexion (appelé depuis async_unload_entry)."""
+        """Cleanly stop the connection (called from async_unload_entry)."""
         self._should_run = False
         if self._reconnect_task:
             self._reconnect_task.cancel()
@@ -136,11 +136,11 @@ class GeoRideSocketManager:
         _LOGGER.info("GeoRide SocketManager stopped")
 
     # ─────────────────────────────────────────────────────────────────
-    # Boucle de reconnexion
+    # Reconnection loop
     # ─────────────────────────────────────────────────────────────────
 
     async def _run_loop(self) -> None:
-        """Boucle principale : connexion + reconnexion automatique."""
+        """Main loop: connection + automatic reconnection."""
         while self._should_run:
             was_connected = self._connected
             try:
@@ -153,7 +153,7 @@ class GeoRideSocketManager:
             if not self._should_run:
                 break
 
-            # Reset délai seulement si on avait réussi à se connecter
+            # Reset delay only if we had successfully connected
             if was_connected:
                 self._reconnect_delay = RECONNECT_DELAY_INITIAL
 
@@ -162,26 +162,26 @@ class GeoRideSocketManager:
                 self._reconnect_delay,
             )
             await asyncio.sleep(self._reconnect_delay)
-            # Backoff exponentiel plafonné
+            # Capped exponential backoff
             self._reconnect_delay = min(self._reconnect_delay * 2, RECONNECT_DELAY_MAX)
 
     # ─────────────────────────────────────────────────────────────────
-    # Connexion Socket.IO
+    # Socket.IO connection
     # ─────────────────────────────────────────────────────────────────
 
     async def _connect(self) -> None:
-        """Établir la connexion Socket.IO et bloquer jusqu'à déconnexion."""
+        """Establish the Socket.IO connection and block until disconnection."""
         try:
-            import socketio  # noqa: PLC0415 — importé ici pour éviter crash au load si absent
+            import socketio  # noqa: PLC0415 — imported here to avoid a crash at load time if missing
         except ImportError:
             _LOGGER.error(
-                "python-socketio non installé. Ajoutez 'python-socketio[asyncio_client]>=5.0' "
-                "dans manifest.json requirements."
+                "python-socketio not installed. Add 'python-socketio[asyncio_client]>=5.0' "
+                "to manifest.json requirements."
             )
             await asyncio.sleep(RECONNECT_DELAY_MAX)
             return
 
-        # S'assurer qu'on a un token valide
+        # Make sure we have a valid token
         if not self._api.token:
             try:
                 await self._api.login()
@@ -192,19 +192,19 @@ class GeoRideSocketManager:
                 return
 
         self._sio = socketio.AsyncClient(
-            reconnection=False,  # on gère nous-mêmes la reconnexion
+            reconnection=False,  # we handle reconnection ourselves
             logger=False,
             engineio_logger=False,
         )
 
-        # ── Enregistrement des handlers ───────────────────────────────
+        # ── Handler registration ──────────────────────────────────────
 
         @self._sio.event
         async def connect():
             self._connected = True
             self._reconnect_delay = RECONNECT_DELAY_INITIAL
             _LOGGER.info("Socket.IO connected to GeoRide")
-            # S'abonner à tous les trackers
+            # Subscribe to all trackers
             for tracker_id in self._tracker_ids:
                 await self._sio.emit("subscribe", tracker_id)
                 _LOGGER.debug("Subscribed to tracker %s", tracker_id)
@@ -221,7 +221,7 @@ class GeoRideSocketManager:
         @self._sio.on("device")
         async def on_device(data):
             await self._dispatch("device", data)
-            # Fire HA event global (compatible avec les automations GeorideHA)
+            # Fire a global HA event (compatible with GeorideHA automations)
             self._hass.bus.async_fire(
                 "georide_device_event",
                 {
@@ -237,13 +237,13 @@ class GeoRideSocketManager:
         @self._sio.on("alarm")
         async def on_alarm(data):
             await self._dispatch("alarm", data)
-            # Fire HA event global (compatible avec les automations GeorideHA)
+            # Fire a global HA event (compatible with GeorideHA automations)
             self._hass.bus.async_fire(
                 "georide_alarm_event",
                 {
                     "tracker_id": str(data.get("trackerId", "")),
                     "device_id": str(data.get("trackerId", "")),
-                    # GeoRide envoie le type dans 'name', fallback sur 'type'
+                    # GeoRide sends the type in 'name', fallback to 'type'
                     "type": data.get("name") or data.get("type", ""),
                     "device_name": data.get("trackerName")
                     or data.get("device_name", ""),
@@ -263,20 +263,20 @@ class GeoRideSocketManager:
                 },
             )
 
-        # ── Connexion ─────────────────────────────────────────────────
+        # ── Connection ────────────────────────────────────────────────
 
         try:
             await self._sio.connect(
                 SOCKETIO_URL,
-                auth={"token": self._api.token},  # selon doc officielle GeoRide
+                auth={"token": self._api.token},  # per the official GeoRide docs
                 transports=["websocket"],
                 wait_timeout=15,
             )
-            # Bloquer jusqu'à déconnexion
+            # Block until disconnection
             await self._sio.wait()
         except asyncio.CancelledError:
-            # Annulation (unload/arrêt HA) : doit remonter jusqu'à _run_loop,
-            # jamais être avalée par le except générique ci-dessous.
+            # Cancellation (unload/HA shutdown): must propagate up to _run_loop,
+            # never be swallowed by the generic except below.
             raise
         except Exception as err:
             _LOGGER.error(
@@ -294,7 +294,7 @@ class GeoRideSocketManager:
             self._sio = None
 
     async def _disconnect(self) -> None:
-        """Déconnecter proprement."""
+        """Disconnect cleanly."""
         if self._sio:
             try:
                 await self._sio.disconnect()
@@ -304,13 +304,13 @@ class GeoRideSocketManager:
         self._connected = False
 
     # ─────────────────────────────────────────────────────────────────
-    # Dispatch vers les entités
+    # Dispatch to entities
     # ─────────────────────────────────────────────────────────────────
 
     async def _dispatch(self, event_name: str, data: Dict[str, Any]) -> None:
-        """Dispatcher un événement vers tous les callbacks enregistrés.
+        """Dispatch an event to all registered callbacks.
 
-        Le tracker_id est extrait du champ 'trackerId' du payload.
+        The tracker_id is extracted from the payload's 'trackerId' field.
         """
         tracker_id = str(data.get("trackerId", ""))
         if not tracker_id:
@@ -323,7 +323,7 @@ class GeoRideSocketManager:
 
         callbacks = self._callbacks.get(tracker_id, {}).get(event_name, [])
 
-        for cb in list(callbacks):  # copie pour éviter modification pendant itération
+        for cb in list(callbacks):  # copy to avoid modification during iteration
             try:
                 if asyncio.iscoroutinefunction(cb):
                     await cb(data)

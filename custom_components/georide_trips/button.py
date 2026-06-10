@@ -9,7 +9,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    CONF_DRIVE_TYPE,
+    DEFAULT_DRIVE_TYPE,
+    DRIVETRAIN_PROFILES,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,6 +30,11 @@ async def async_setup_entry(
     coordinators = data["coordinators"]
     lifetime_coordinators = data["lifetime_coordinators"]
     api = data["api"]
+
+    profile = DRIVETRAIN_PROFILES.get(
+        entry.options.get(CONF_DRIVE_TYPE, DEFAULT_DRIVE_TYPE),
+        DRIVETRAIN_PROFILES["chain"],
+    )
 
     buttons = []
     for tracker in trackers:
@@ -52,33 +62,39 @@ async def async_setup_entry(
                     hass,
                     entry,
                     tracker,
-                    "chaine",
-                    icon="mdi:link-variant",
-                    odometer_key="real_odometer",
-                    km_key="km_dernier_entretien_chaine",
-                    dt_key="date_dernier_entretien_chaine",
-                ),
-                GeoRideRecordMaintenanceButton(
-                    hass,
-                    entry,
-                    tracker,
-                    "vidange",
+                    "oil_change",
                     icon="mdi:oil",
                     odometer_key="real_odometer",
-                    km_key="km_dernier_entretien_vidange",
-                    dt_key="date_dernier_entretien_vidange",
+                    km_key="oil_change_km_at_last_oil_change",
+                    dt_key="oil_change_last_oil_change_date",
                 ),
                 GeoRideRecordMaintenanceButton(
                     hass,
                     entry,
                     tracker,
-                    "revision",
+                    "service",
                     icon="mdi:wrench",
                     odometer_key="real_odometer",
-                    km_key="km_dernier_entretien_revision",
-                    dt_key="date_dernier_entretien_revision",
+                    km_key="service_km_at_last_service",
+                    dt_key="service_last_service_date",
                 ),
             ]
+        )
+
+        # Drivetrain maintenance record button — always created; label adapts
+        # to the selected drive_type (chain / shaft / belt).
+        buttons.append(
+            GeoRideRecordMaintenanceButton(
+                hass,
+                entry,
+                tracker,
+                "drivetrain",
+                icon="mdi:link-variant",
+                odometer_key="real_odometer",
+                km_key="drivetrain_km_at_last_service",
+                dt_key="drivetrain_last_service_date",
+                name=f"Record {profile['label'].lower()} service",
+            )
         )
 
     async_add_entities(buttons)
@@ -88,6 +104,8 @@ async def async_setup_entry(
 class GeoRideRefreshTripsButton(ButtonEntity):
     """Button to manually refresh recent trips."""
 
+    _attr_has_entity_name = True
+
     def __init__(self, entry, tracker, coordinator):
         """Initialize the button."""
         self.tracker_id = str(tracker.get("trackerId"))
@@ -96,7 +114,7 @@ class GeoRideRefreshTripsButton(ButtonEntity):
         self._tracker = tracker
         self._coordinator = coordinator
 
-        self._attr_name = f"{self.tracker_name} Refresh Trips"
+        self._attr_name = "Refresh trips"
         self._attr_unique_id = f"{self.tracker_id}_refresh_trips"
         self._attr_icon = "mdi:refresh"
 
@@ -105,7 +123,7 @@ class GeoRideRefreshTripsButton(ButtonEntity):
         """Return device information."""
         return DeviceInfo(
             identifiers={(DOMAIN, self.tracker_id)},
-            name=f"{self.tracker_name} Trips",
+            name=self.tracker_name,
             manufacturer="GeoRide",
             model=self._tracker.get("model", "GeoRide Tracker"),
             sw_version=str(self._tracker.get("softwareVersion", "")),
@@ -120,6 +138,8 @@ class GeoRideRefreshTripsButton(ButtonEntity):
 class GeoRideRefreshOdometerButton(ButtonEntity):
     """Button to manually refresh lifetime odometer."""
 
+    _attr_has_entity_name = True
+
     def __init__(self, entry, tracker, coordinator):
         """Initialize the button."""
         self.tracker_id = str(tracker.get("trackerId"))
@@ -128,7 +148,7 @@ class GeoRideRefreshOdometerButton(ButtonEntity):
         self._tracker = tracker
         self._coordinator = coordinator
 
-        self._attr_name = f"{self.tracker_name} Refresh Odometer"
+        self._attr_name = "Refresh odometer"
         self._attr_unique_id = f"{self.tracker_id}_refresh_odometer"
         self._attr_icon = "mdi:counter"
 
@@ -137,7 +157,7 @@ class GeoRideRefreshOdometerButton(ButtonEntity):
         """Return device information."""
         return DeviceInfo(
             identifiers={(DOMAIN, self.tracker_id)},
-            name=f"{self.tracker_name} Trips",
+            name=self.tracker_name,
             manufacturer="GeoRide",
             model=self._tracker.get("model", "GeoRide Tracker"),
             sw_version=str(self._tracker.get("softwareVersion", "")),
@@ -150,12 +170,14 @@ class GeoRideRefreshOdometerButton(ButtonEntity):
 
 
 class GeoRideRecordMaintenanceButton(ButtonEntity):
-    """Button to record a maintenance event (chain, oil change, revision)."""
+    """Button to record a maintenance event (drivetrain, oil change, service)."""
+
+    _attr_has_entity_name = True
 
     LABEL = {
-        "chaine": "Enregistrer entretien chaîne",
-        "vidange": "Enregistrer vidange",
-        "revision": "Enregistrer révision",
+        "drivetrain": "Record drivetrain service",
+        "oil_change": "Record oil change",
+        "service": "Record service",
     }
 
     def __init__(
@@ -168,6 +190,7 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
         odometer_key: str,
         km_key: str,
         dt_key: str,
+        name: str | None = None,
     ) -> None:
         """Initialize the maintenance record button."""
         self._hass = hass
@@ -178,7 +201,7 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
         self._km_key = km_key
         self._dt_key = dt_key
 
-        # Entity_id résolus dans async_added_to_hass
+        # Entity_ids resolved in async_added_to_hass
         self._odometer_entity: str | None = None
         self._km_entity: str | None = None
         self._dt_entity: str | None = None
@@ -186,8 +209,7 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
         self.tracker_id = str(tracker.get("trackerId"))
         self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
 
-        label = self.LABEL.get(maintenance_type, maintenance_type)
-        self._attr_name = f"{self.tracker_name} {label}"
+        self._attr_name = name or self.LABEL.get(maintenance_type, maintenance_type)
         self._attr_unique_id = f"{self.tracker_id}_record_{maintenance_type}"
         self._attr_icon = icon
 
@@ -196,14 +218,14 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
         """Return device information."""
         return DeviceInfo(
             identifiers={(DOMAIN, self.tracker_id)},
-            name=f"{self.tracker_name} Trips",
+            name=self.tracker_name,
             manufacturer="GeoRide",
             model=self._tracker.get("model", "GeoRide Tracker"),
             sw_version=str(self._tracker.get("softwareVersion", "")),
         )
 
     async def async_added_to_hass(self) -> None:
-        """Résoudre les entity_id via le registry."""
+        """Resolve the entity_ids via the registry."""
         await super().async_added_to_hass()
         from .helpers import resolve_entity_id
 
@@ -261,7 +283,7 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
 
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-        # Mise à jour du KM
+        # Update the KM
         await self._hass.services.async_call(
             "number",
             "set_value",
@@ -269,7 +291,7 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
             blocking=True,
         )
 
-        # Mise à jour de la date
+        # Update the date
         await self._hass.services.async_call(
             "datetime",
             "set_value",
@@ -287,22 +309,24 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
 
 
 class GeoRideConfirmerPleinButton(ButtonEntity):
-    """Bouton pour confirmer un plein — calcul odometer précis en 2 étapes.
+    """Button to confirm a refuel — precise odometer computation in 2 steps.
 
-    Étape 1 (async_press) — immédiate :
-        • Stocker plein_pending_at = now() (datetime)
-        • Éteindre le switch "Faire le plein"
-        • S'abonner à la prochaine fin de trajet confirmée (on_stop_confirmed) du coordinator
+    Step 1 (async_press) — immediate:
+        • Store refuel_pending_at = now() (datetime)
+        • Turn off the "Refuel" switch
+        • Subscribe to the coordinator's next confirmed end of trip (on_stop_confirmed)
 
-    Étape 2 (_on_stop_confirmed_for_plein) — déclenchée au verrouillage :
-        • Appel API get_trips(plein_pending_at → now) → distance post-plein
+    Step 2 (_on_stop_confirmed_for_plein) — triggered on lock:
+        • API call get_trips(refuel_pending_at → now) → post-refuel distance
         • odometer_au_plein = odometer_actuel - distance_post_plein
-        • Calcul distance inter-plein
-        • Rotation FIFO historique (hist_3 ← hist_2 ← hist_1 ← nouveau)
-        • Recalcul moyenne glissante (max 3 pleins)
-        • Mise à jour km_dernier_plein + nb_pleins_enregistres
-        • Reset plein_pending_at = None (sentinel epoch 1970)
+        • Compute inter-refuel distance
+        • FIFO history rotation (hist_3 ← hist_2 ← hist_1 ← new)
+        • Recompute rolling average (max 3 refuels)
+        • Update fuel_km_at_last_refuel + fuel_recorded_refuel_count
+        • Reset refuel_pending_at = None (sentinel epoch 1970)
     """
+
+    _attr_has_entity_name = True
 
     HIST_SLOTS = 3
 
@@ -324,18 +348,18 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
         self._prefix = self.tracker_name.lower().replace(" ", "_")
 
-        self._attr_name = f"{self.tracker_name} Confirmer le plein"
-        self._attr_unique_id = f"{self.tracker_id}_confirmer_plein"
+        self._attr_name = "Confirm refuel"
+        self._attr_unique_id = f"{self.tracker_id}_confirm_refuel"
         self._attr_icon = "mdi:gas-station-outline"
 
-        # Gestion de l'abonnement au stop_confirmed
+        # Management of the stop_confirmed subscription
         self._unregister_stop_cb: callable | None = None
 
     @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self.tracker_id)},
-            name=f"{self.tracker_name} Trips",
+            name=self.tracker_name,
             manufacturer="GeoRide",
             model=self._tracker.get("model", "GeoRide Tracker"),
             sw_version=str(self._tracker.get("softwareVersion", "")),
@@ -353,7 +377,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
             return default
 
     def _number_entity_id(self, key: str) -> str | None:
-        """Résoudre l'entity_id d'un number à partir de sa clé via l'entity registry."""
+        """Resolve a number's entity_id from its key via the entity registry."""
         from homeassistant.helpers import entity_registry as er
 
         registry = er.async_get(self._hass)
@@ -361,7 +385,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         return registry.async_get_entity_id("number", DOMAIN, unique_id)
 
     def _datetime_entity_id(self, key: str) -> str | None:
-        """Résoudre l'entity_id d'un datetime à partir de sa clé via l'entity registry."""
+        """Resolve a datetime's entity_id from its key via the entity registry."""
         from homeassistant.helpers import entity_registry as er
 
         registry = er.async_get(self._hass)
@@ -369,11 +393,11 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         return registry.async_get_entity_id("datetime", DOMAIN, unique_id)
 
     def _get_number(self, key: str, default: float = 0.0) -> float:
-        """Lire la valeur d'un number par sa clé (via entity registry)."""
+        """Read a number's value by its key (via the entity registry)."""
         entity_id = self._number_entity_id(key)
         if entity_id is None:
             _LOGGER.warning(
-                "%s: entity_id introuvable pour la clé number '%s'",
+                "%s: entity_id not found for number key '%s'",
                 self.tracker_name,
                 key,
             )
@@ -381,11 +405,11 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         return self._get_float(entity_id, default)
 
     def _get_datetime(self, key: str) -> datetime | None:
-        """Lire la valeur d'un datetime par sa clé. Retourne None si absent ou sentinel 1970."""
+        """Read a datetime's value by its key. Returns None if missing or sentinel 1970."""
         entity_id = self._datetime_entity_id(key)
         if entity_id is None:
             _LOGGER.warning(
-                "%s: entity_id introuvable pour la clé datetime '%s'",
+                "%s: entity_id not found for datetime key '%s'",
                 self.tracker_name,
                 key,
             )
@@ -397,7 +421,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
             dt = datetime.fromisoformat(state.state.replace("Z", "+00:00"))
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
-            # Sentinel : epoch 1970 = pas de plein en attente
+            # Sentinel: epoch 1970 = no pending refuel
             if dt.year == 1970:
                 return None
             return dt
@@ -408,7 +432,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         entity_id = self._number_entity_id(key)
         if entity_id is None:
             _LOGGER.error(
-                "%s: entity_id introuvable pour la clé number '%s' (unique_id=%s_%s)",
+                "%s: entity_id not found for number key '%s' (unique_id=%s_%s)",
                 self.tracker_name,
                 key,
                 self.tracker_id,
@@ -423,11 +447,11 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         )
 
     async def _set_datetime(self, key: str, value: datetime | None) -> None:
-        """Écrire un datetime par sa clé. None → sentinel epoch 1970."""
+        """Write a datetime by its key. None → sentinel epoch 1970."""
         entity_id = self._datetime_entity_id(key)
         if entity_id is None:
             _LOGGER.error(
-                "%s: entity_id introuvable pour la clé datetime '%s' (unique_id=%s_%s)",
+                "%s: entity_id not found for datetime key '%s' (unique_id=%s_%s)",
                 self.tracker_name,
                 key,
                 self.tracker_id,
@@ -446,30 +470,30 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         )
 
     def _cancel_pending(self) -> None:
-        """Annuler l'abonnement stop_confirmed en cours."""
+        """Cancel the in-progress stop_confirmed subscription."""
         if self._unregister_stop_cb:
             self._unregister_stop_cb()
             self._unregister_stop_cb = None
 
     async def async_added_to_hass(self) -> None:
-        """Au démarrage, traiter ou réinscrire un plein en attente s'il existe."""
+        """At startup, process or re-subscribe a pending refuel if one exists."""
         await super().async_added_to_hass()
-        plein_pending = self._get_datetime("plein_pending_at")
+        plein_pending = self._get_datetime("refuel_pending_at")
         if plein_pending is not None:
             if self._is_tracker_locked():
-                # Tracker verrouillé → le trajet post-plein est terminé, on peut calculer
+                # Tracker locked → the post-refuel trip is over, we can compute
                 _LOGGER.info(
-                    "%s: plein_pending_at non-null au démarrage (%s) et tracker verrouillé "
-                    "— tentative de calcul différé",
+                    "%s: refuel_pending_at non-null at startup (%s) and tracker locked "
+                    "— attempting deferred computation",
                     self.tracker_name,
                     plein_pending.isoformat(),
                 )
                 self._hass.async_create_task(self._compute_and_record_plein())
             else:
-                # Tracker déverrouillé → en cours de trajet, réinscrire le callback
+                # Tracker unlocked → trip in progress, re-subscribe the callback
                 _LOGGER.info(
-                    "%s: plein_pending_at non-null au démarrage (%s) et tracker déverrouillé "
-                    "— réinscription attente verrouillage",
+                    "%s: refuel_pending_at non-null at startup (%s) and tracker unlocked "
+                    "— re-subscribing to wait for lock",
                     self.tracker_name,
                     plein_pending.isoformat(),
                 )
@@ -477,55 +501,55 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
                     self._on_stop_confirmed_for_plein
                 )
 
-    # ── Helpers lock state ──────────────────────────────────────────────────
+    # ── Lock state helpers ──────────────────────────────────────────────────
 
     def _is_tracker_locked(self) -> bool:
-        """Vérifier si le tracker est actuellement verrouillé.
+        """Check whether the tracker is currently locked.
 
-        Utilise le binary_sensor via le registry (à jour en temps réel via
-        Socket.IO), ou fallback sur la propriété publique is_locked du
-        coordinator (polling 5 min).
-        binary_sensor lock : off = verrouillé, on = déverrouillé.
+        Uses the binary_sensor via the registry (up to date in real time via
+        Socket.IO), or falls back to the coordinator's public is_locked
+        property (polling 5 min).
+        binary_sensor lock: off = locked, on = unlocked.
         """
         from .helpers import resolve_entity_id
 
         lock_entity = resolve_entity_id(
-            self._hass, "binary_sensor", self.tracker_id, "verrouille"
+            self._hass, "binary_sensor", self.tracker_id, "locked"
         )
         if lock_entity:
             state = self._hass.states.get(lock_entity)
             if state and state.state not in ("unknown", "unavailable"):
                 return state.state == "off"  # off = locked
 
-        # Fallback : état public du coordinator (StatusCoordinator attaché)
+        # Fallback: the coordinator's public state (attached StatusCoordinator)
         locked = self._coordinator.is_locked
         return bool(locked) if locked is not None else False
 
-    # ── Étape 1 : press immédiat ──────────────────────────────────────────────
+    # ── Step 1: immediate press ───────────────────────────────────────────────
 
     async def async_press(self) -> None:
-        """Étape 1 — Horodatage du plein + attendre le prochain verrouillage.
+        """Step 1 — Timestamp the refuel + wait for the next lock.
 
-        Si le tracker est déjà verrouillé (plein confirmé à l'arrêt), le calcul
-        est exécuté immédiatement sans attendre un verrouillage futur.
+        If the tracker is already locked (refuel confirmed while stopped), the
+        computation runs immediately without waiting for a future lock.
         """
-        # Si un plein est déjà en attente, l'annuler proprement
+        # If a refuel is already pending, cancel it cleanly
         if self._unregister_stop_cb:
             _LOGGER.warning(
-                "%s: nouveau press plein alors qu'un plein était déjà en attente — annulation",
+                "%s: new refuel press while a refuel was already pending — cancelling",
                 self.tracker_name,
             )
             self._cancel_pending()
 
-        # Snapshot : horodatage du plein uniquement
+        # Snapshot: refuel timestamp only
         now = datetime.now(timezone.utc)
 
-        await self._set_datetime("plein_pending_at", now)
+        await self._set_datetime("refuel_pending_at", now)
 
-        # Si le tracker est déjà verrouillé → calcul immédiat
+        # If the tracker is already locked → immediate computation
         if self._is_tracker_locked():
             _LOGGER.info(
-                "%s: plein enregistré à %s — tracker déjà verrouillé, calcul immédiat",
+                "%s: refuel recorded at %s — tracker already locked, immediate computation",
                 self.tracker_name,
                 now.strftime("%H:%M:%S"),
             )
@@ -533,46 +557,46 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
             return
 
         _LOGGER.info(
-            "%s: plein enregistré à %s — attente verrouillage pour calcul précis",
+            "%s: refuel recorded at %s — waiting for lock for precise computation",
             self.tracker_name,
             now.strftime("%H:%M:%S"),
         )
 
-        # S'abonner au prochain verrouillage (one-shot)
+        # Subscribe to the next lock (one-shot)
         self._unregister_stop_cb = self._coordinator.on_stop_confirmed(
             self._on_stop_confirmed_for_plein
         )
 
-    # ── Étape 2 : fin de trajet confirmée ────────────────────────────────────
+    # ── Step 2: confirmed end of trip ────────────────────────────────────────
 
     def _on_stop_confirmed_for_plein(self) -> None:
-        """Callback appelé par le coordinator lors du verrouillage du tracker."""
-        # _unregister_stop_cb est déjà consommé (one-shot), on nettoie la référence
+        """Callback called by the coordinator when the tracker locks."""
+        # _unregister_stop_cb is already consumed (one-shot), clean up the reference
         self._unregister_stop_cb = None
         self._hass.async_create_task(self._compute_and_record_plein())
 
-    # ── Calcul au verrouillage ────────────────────────────────────────────────
+    # ── Computation on lock ───────────────────────────────────────────────────
 
     async def _compute_and_record_plein(self) -> None:
-        """Calculer l'odometer au plein et enregistrer toutes les métriques.
+        """Compute the odometer at refuel and record all the metrics.
 
-        Logique :
-        - plein_pending_at  = horodatage du plein (datetime UTC)
-        - Refresh du coordinator pour s'assurer que l'odometer HA intègre le trajet
-        - Appel API get_trips(plein_pending_at → now) → distance parcourue APRÈS le plein
+        Logic:
+        - refuel_pending_at  = refuel timestamp (UTC datetime)
+        - Refresh the coordinator to ensure the HA odometer includes the trip
+        - API call get_trips(refuel_pending_at → now) → distance traveled AFTER the refuel
         - odometer_au_plein = odometer_actuel - distance_post_plein
         """
         from .const import METERS_TO_KM
         from .helpers import resolve_entity_id
 
-        plein_dt = self._get_datetime("plein_pending_at")
-        km_dernier_plein = self._get_number("km_dernier_plein")
+        plein_dt = self._get_datetime("refuel_pending_at")
+        fuel_km_at_last_refuel = self._get_number("fuel_km_at_last_refuel")
 
-        # ── Refresh coordinator pour garantir que l'odometer est à jour ───────
-        # Sans ce refresh, le trajet venant de se terminer n'est pas encore intégré
-        # dans sensor.real_odometer, ce qui fausserait le calcul odometer_au_plein.
+        # ── Refresh the coordinator to ensure the odometer is up to date ──────
+        # Without this refresh, the trip that just ended is not yet integrated
+        # into sensor.real_odometer, which would skew the odometer_au_plein computation.
         _LOGGER.debug(
-            "%s: refresh coordinator avant lecture odometer (garantir intégration du trajet)",
+            "%s: refresh coordinator before reading odometer (ensure trip is integrated)",
             self.tracker_name,
         )
         await self._coordinator.async_request_refresh()
@@ -584,21 +608,21 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
 
         if plein_dt is None:
             _LOGGER.warning(
-                "%s: _compute_and_record_plein appelé sans plein_pending_at valide",
+                "%s: _compute_and_record_plein called without a valid refuel_pending_at",
                 self.tracker_name,
             )
             return
 
         if odometer_actuel <= 0:
             _LOGGER.error(
-                "%s: odometer actuel invalide (%.1f), abandon",
+                "%s: invalid current odometer (%.1f), aborting",
                 self.tracker_name,
                 odometer_actuel,
             )
-            await self._set_datetime("plein_pending_at", None)
+            await self._set_datetime("refuel_pending_at", None)
             return
 
-        # ── Distance parcourue APRÈS le plein (plein_pending_at → maintenant) ──
+        # ── Distance traveled AFTER the refuel (refuel_pending_at → now) ────────
         now_dt = datetime.now(timezone.utc)
         distance_post_plein = await self._fetch_post_plein_distance(
             plein_dt, now_dt, METERS_TO_KM
@@ -606,7 +630,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
 
         odometer_au_plein = round(odometer_actuel - distance_post_plein, 2)
         _LOGGER.info(
-            "%s: odometer plein = %.1f km (actuel=%.1f - post_plein=%.1f km)",
+            "%s: refuel odometer = %.1f km (current=%.1f - post_refuel=%.1f km)",
             self.tracker_name,
             odometer_au_plein,
             odometer_actuel,
@@ -615,59 +639,59 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
 
         if odometer_au_plein <= 0:
             _LOGGER.error(
-                "%s: odometer au plein invalide (%.1f), abandon",
+                "%s: invalid refuel odometer (%.1f), aborting",
                 self.tracker_name,
                 odometer_au_plein,
             )
-            await self._set_datetime("plein_pending_at", None)
+            await self._set_datetime("refuel_pending_at", None)
             return
 
-        # ── Premier plein : juste snapshot, pas de calcul inter-plein ─────
-        if km_dernier_plein == 0:
+        # ── First refuel: just snapshot, no inter-refuel computation ──────
+        if fuel_km_at_last_refuel == 0:
             _LOGGER.info(
-                "%s: premier plein — snapshot odometer = %.1f km",
+                "%s: first refuel — odometer snapshot = %.1f km",
                 self.tracker_name,
                 odometer_au_plein,
             )
-            await self._set_number("km_dernier_plein", odometer_au_plein)
-            await self._set_number("nb_pleins_enregistres", 1)
-            await self._set_datetime("plein_pending_at", None)
+            await self._set_number("fuel_km_at_last_refuel", odometer_au_plein)
+            await self._set_number("fuel_recorded_refuel_count", 1)
+            await self._set_datetime("refuel_pending_at", None)
             return
 
-        # ── Calcul distance inter-plein ────────────────────────────────────
-        distance_inter_plein = round(odometer_au_plein - km_dernier_plein, 1)
+        # ── Inter-refuel distance computation ──────────────────────────────
+        distance_inter_plein = round(odometer_au_plein - fuel_km_at_last_refuel, 1)
         if distance_inter_plein <= 0:
             _LOGGER.warning(
-                "%s: distance inter-plein négative (%.1f km), abandon",
+                "%s: negative inter-refuel distance (%.1f km), aborting",
                 self.tracker_name,
                 distance_inter_plein,
             )
-            await self._set_datetime("plein_pending_at", None)
+            await self._set_datetime("refuel_pending_at", None)
             return
 
-        # ── Rotation FIFO historique ────────────────────────────────────────
-        hist_1 = self._get_number("km_plein_hist_1")
-        hist_2 = self._get_number("km_plein_hist_2")
+        # ── FIFO history rotation ────────────────────────────────────────────
+        hist_1 = self._get_number("fuel_distance_between_refuels_1")
+        hist_2 = self._get_number("fuel_distance_between_refuels_2")
 
-        await self._set_number("km_plein_hist_3", hist_2)
-        await self._set_number("km_plein_hist_2", hist_1)
-        await self._set_number("km_plein_hist_1", distance_inter_plein)
+        await self._set_number("fuel_distance_between_refuels_3", hist_2)
+        await self._set_number("fuel_distance_between_refuels_2", hist_1)
+        await self._set_number("fuel_distance_between_refuels_1", distance_inter_plein)
 
-        # ── Moyenne glissante (slots non-nuls, max HIST_SLOTS) ─────────────
+        # ── Rolling average (non-zero slots, max HIST_SLOTS) ───────────────
         slots = [s for s in [distance_inter_plein, hist_1, hist_2] if s > 0]
         slots = slots[: self.HIST_SLOTS]
         moyenne = round(sum(slots) / len(slots))
 
-        nb_pleins = int(self._get_number("nb_pleins_enregistres")) + 1
+        nb_pleins = int(self._get_number("fuel_recorded_refuel_count")) + 1
 
-        await self._set_number("autonomie_moyenne_calculee", moyenne)
-        await self._set_number("nb_pleins_enregistres", nb_pleins)
-        await self._set_number("km_dernier_plein", odometer_au_plein)
-        await self._set_datetime("plein_pending_at", None)
+        await self._set_number("fuel_calculated_average_range", moyenne)
+        await self._set_number("fuel_recorded_refuel_count", nb_pleins)
+        await self._set_number("fuel_km_at_last_refuel", odometer_au_plein)
+        await self._set_datetime("refuel_pending_at", None)
 
         _LOGGER.info(
-            "%s: plein confirmé — odometer=%.1f km, inter-plein=%.1f km, "
-            "moyenne=%d km (%d valeur(s)), nb_pleins=%d",
+            "%s: refuel confirmed — odometer=%.1f km, inter-refuel=%.1f km, "
+            "average=%d km (%d value(s)), nb_pleins=%d",
             self.tracker_name,
             odometer_au_plein,
             distance_inter_plein,
@@ -679,13 +703,13 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
     async def _fetch_post_plein_distance(
         self, plein_dt: datetime, now_dt: datetime, meters_to_km: float
     ) -> float:
-        """Appeler l'API get_trips entre plein_pending_at et maintenant.
+        """Call the get_trips API between refuel_pending_at and now.
 
-        Retourne la distance parcourue APRÈS le plein en km, ou 0.0 si l'API échoue.
+        Returns the distance traveled AFTER the refuel in km, or 0.0 if the API fails.
         """
         try:
             _LOGGER.debug(
-                "%s: fetch trips post-plein : %s → %s",
+                "%s: fetch post-refuel trips: %s → %s",
                 self.tracker_name,
                 plein_dt.isoformat(),
                 now_dt.isoformat(),
@@ -698,7 +722,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
             )
 
             if trips is None:
-                _LOGGER.warning("%s: API get_trips a retourné None", self.tracker_name)
+                _LOGGER.warning("%s: get_trips API returned None", self.tracker_name)
                 return 0.0
 
             distance_km = round(
@@ -706,7 +730,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
             )
 
             _LOGGER.info(
-                "%s: distance post-plein API = %.1f km (%d segment(s) entre %s et %s)",
+                "%s: post-refuel distance API = %.1f km (%d segment(s) between %s and %s)",
                 self.tracker_name,
                 distance_km,
                 len(trips),
@@ -717,7 +741,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
 
         except Exception as err:
             _LOGGER.error(
-                "%s: erreur fetch distance post-plein : %s",
+                "%s: error fetching post-refuel distance: %s",
                 self.tracker_name,
                 err,
             )
@@ -725,21 +749,23 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
 
 
 class GeoRideAppliquerAutonomieButton(ButtonEntity):
-    """Bouton pour appliquer l'autonomie moyenne calculée comme autonomie de référence.
+    """Button to apply the computed average range as the reference range.
 
     `button.<moto>_appliquer_autonomie_calculee`
 
-    Copie la valeur de `number.<moto>_carburant_autonomie_moyenne_calculee`
-    dans `number.<moto>_autonomie_totale`.
+    Copies the value of `number.<moto>_carburant_autonomie_moyenne_calculee`
+    into `number.<moto>_autonomie_totale`.
 
-    Utilisable :
-    - Manuellement depuis l'UI HA
-    - Via le blueprint après notification de nouvelle moyenne disponible
-      (action mobile ✅ Appliquer)
+    Usable:
+    - Manually from the HA UI
+    - Via the blueprint after a "new average available" notification
+      (mobile action ✅ Apply)
 
-    Pré-condition : nb_pleins_enregistres >= 2 et autonomie_moyenne_calculee > 0.
-    Si non satisfaite, log un warning et ne fait rien.
+    Pre-condition: fuel_recorded_refuel_count >= 2 and fuel_calculated_average_range > 0.
+    If not met, logs a warning and does nothing.
     """
+
+    _attr_has_entity_name = True
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tracker: dict) -> None:
         self._hass = hass
@@ -750,15 +776,15 @@ class GeoRideAppliquerAutonomieButton(ButtonEntity):
         self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
         self._prefix = self.tracker_name.lower().replace(" ", "_")
 
-        self._attr_name = f"{self.tracker_name} Appliquer autonomie calculée"
-        self._attr_unique_id = f"{self.tracker_id}_appliquer_autonomie_calculee"
+        self._attr_name = "Apply calculated range"
+        self._attr_unique_id = f"{self.tracker_id}_apply_calculated_range"
         self._attr_icon = "mdi:check-circle-outline"
 
     @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self.tracker_id)},
-            name=f"{self.tracker_name} Trips",
+            name=self.tracker_name,
             manufacturer="GeoRide",
             model=self._tracker.get("model", "GeoRide Tracker"),
             sw_version=str(self._tracker.get("softwareVersion", "")),
@@ -774,22 +800,22 @@ class GeoRideAppliquerAutonomieButton(ButtonEntity):
             return default
 
     async def async_press(self) -> None:
-        """Copier autonomie_moyenne_calculee → autonomie_totale."""
+        """Copy fuel_calculated_average_range → fuel_total_range."""
         from .helpers import resolve_entity_id
 
         entity_moyenne = resolve_entity_id(
-            self._hass, "number", self.tracker_id, "autonomie_moyenne_calculee"
+            self._hass, "number", self.tracker_id, "fuel_calculated_average_range"
         )
         entity_nb_pleins = resolve_entity_id(
-            self._hass, "number", self.tracker_id, "nb_pleins_enregistres"
+            self._hass, "number", self.tracker_id, "fuel_recorded_refuel_count"
         )
         entity_totale = resolve_entity_id(
-            self._hass, "number", self.tracker_id, "autonomie_totale"
+            self._hass, "number", self.tracker_id, "fuel_total_range"
         )
 
         if not entity_moyenne or not entity_nb_pleins or not entity_totale:
             _LOGGER.error(
-                "%s: impossible de résoudre les entités carburant via le registry",
+                "%s: unable to resolve the fuel entities via the registry",
                 self.tracker_name,
             )
             return
@@ -799,8 +825,8 @@ class GeoRideAppliquerAutonomieButton(ButtonEntity):
 
         if nb_pleins < 2 or moyenne <= 0:
             _LOGGER.warning(
-                "%s: impossible d'appliquer l'autonomie calculée "
-                "(nb_pleins=%.0f, moyenne=%.1f km) — besoin d'au moins 2 pleins.",
+                "%s: cannot apply the computed range "
+                "(nb_pleins=%.0f, average=%.1f km) — need at least 2 refuels.",
                 self.tracker_name,
                 nb_pleins,
                 moyenne,
@@ -815,7 +841,7 @@ class GeoRideAppliquerAutonomieButton(ButtonEntity):
         )
 
         _LOGGER.info(
-            "%s: autonomie_totale mise à jour → %.1f km (moyenne sur %.0f pleins)",
+            "%s: fuel_total_range updated → %.1f km (average over %.0f refuels)",
             self.tracker_name,
             moyenne,
             nb_pleins,

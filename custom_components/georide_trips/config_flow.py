@@ -17,6 +17,7 @@ from .const import (
     CONF_TRACKER_SCAN_INTERVAL,
     CONF_GPS_MIN_ACCURACY,
     CONF_GPS_MIN_DISTANCE,
+    CONF_DRIVE_TYPE,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_LIFETIME_SCAN_INTERVAL,
     DEFAULT_TRIPS_DAYS_BACK,
@@ -24,6 +25,8 @@ from .const import (
     DEFAULT_TRACKER_SCAN_INTERVAL,
     DEFAULT_GPS_MIN_ACCURACY,
     DEFAULT_GPS_MIN_DISTANCE,
+    DEFAULT_DRIVE_TYPE,
+    DRIVE_TYPES,
 )
 from .api import GeoRideApiError, GeoRideAuthError, GeoRideTripsAPI
 
@@ -59,8 +62,8 @@ class GeoRideTripsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
-        # Une seule instance supportée : les unique_id d'entités ne sont pas
-        # préfixés par config entry (limitation single-account assumée).
+        # Only a single instance supported: entity unique_ids are not
+        # prefixed by config entry (assumed single-account limitation).
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
 
@@ -101,8 +104,8 @@ class GeoRideTripsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class GeoRideTripsOptionsFlow(config_entries.OptionsFlow):
     """Handle options flow for GeoRide Trips.
 
-    Pas de __init__ : la classe de base expose self.config_entry
-    (l'assigner soi-même est déprécié depuis HA 2024.11).
+    No __init__: the base class exposes self.config_entry
+    (assigning it yourself is deprecated since HA 2024.11).
     """
 
     async def async_step_init(self, user_input=None):
@@ -130,6 +133,9 @@ class GeoRideTripsOptionsFlow(config_entries.OptionsFlow):
         )
         current_gps_min_distance = self.config_entry.options.get(
             CONF_GPS_MIN_DISTANCE, DEFAULT_GPS_MIN_DISTANCE
+        )
+        current_drive_type = self.config_entry.options.get(
+            CONF_DRIVE_TYPE, DEFAULT_DRIVE_TYPE
         )
 
         return self.async_show_form(
@@ -164,6 +170,10 @@ class GeoRideTripsOptionsFlow(config_entries.OptionsFlow):
                         CONF_GPS_MIN_DISTANCE,
                         default=current_gps_min_distance,
                     ): vol.All(vol.Coerce(int), vol.Range(min=0, max=500)),
+                    vol.Optional(
+                        CONF_DRIVE_TYPE,
+                        default=current_drive_type,
+                    ): vol.In(DRIVE_TYPES),
                 }
             ),
         )
