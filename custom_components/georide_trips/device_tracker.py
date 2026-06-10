@@ -23,12 +23,12 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import GeoRideTripsAPI
 from .const import (
-    DOMAIN,
     CONF_GPS_MIN_ACCURACY,
     DEFAULT_GPS_MIN_ACCURACY,
     CONF_GPS_MIN_DISTANCE,
     DEFAULT_GPS_MIN_DISTANCE,
 )
+from .data import GeoRideConfigEntry
 from .helpers import GeoRideEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,13 +49,13 @@ def _haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> f
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: GeoRideConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GeoRide Trips device tracker from a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    trackers = data["trackers"]
-    api: GeoRideTripsAPI = data["api"]
+    data = entry.runtime_data
+    trackers = data.trackers
+    api: GeoRideTripsAPI = data.api
 
     entities = []
     for tracker in trackers:
@@ -157,9 +157,8 @@ class GeoRidePositionTracker(GeoRideEntityMixin, TrackerEntity):
         """Startup: initial position + Socket.IO subscription."""
         await super().async_added_to_hass()
 
-        # Fetch the socket_manager from hass.data (available here, after full setup)
-        entry_data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
-        self._socket_manager = entry_data.get("socket_manager")
+        # Fetch the socket_manager from runtime_data (available here, after full setup)
+        self._socket_manager = self._entry.runtime_data.socket_manager
 
         # Subscribe to position events via Socket.IO
         if self._socket_manager:

@@ -26,11 +26,11 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
-    DOMAIN,
     CONF_DRIVE_TYPE,
     DEFAULT_DRIVE_TYPE,
     DRIVETRAIN_PROFILES,
 )
+from .data import GeoRideConfigEntry
 from .helpers import GeoRideEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -70,12 +70,12 @@ DATETIME_DESCRIPTIONS = [
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: GeoRideConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GeoRide Trips datetime entities from a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    trackers = data["trackers"]
+    data = entry.runtime_data
+    trackers = data.trackers
 
     profile = DRIVETRAIN_PROFILES.get(
         entry.options.get(CONF_DRIVE_TYPE, DEFAULT_DRIVE_TYPE),

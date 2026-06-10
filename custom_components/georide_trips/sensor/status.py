@@ -11,7 +11,6 @@ from homeassistant.const import UnitOfElectricPotential, EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from ..const import DOMAIN
 from ..coordinator import GeoRideTrackerStatusCoordinator
 from ..helpers import GeoRideEntityMixin
 
@@ -177,8 +176,7 @@ class GeoRideLastAlarmSensor(GeoRideEntityMixin, RestoreEntity, SensorEntity):
             self._device_name = last_state.attributes.get("device_name")
 
         # Socket.IO callback registration
-        entry_data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
-        socket_manager = entry_data.get("socket_manager")
+        socket_manager = self._entry.runtime_data.socket_manager
         if socket_manager:
             self._unregister_alarm = socket_manager.register_callback(
                 self.tracker_id, "alarm", self._handle_alarm

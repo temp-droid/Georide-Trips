@@ -56,11 +56,11 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
 
 from .const import (
-    DOMAIN,
     CONF_DRIVE_TYPE,
     DEFAULT_DRIVE_TYPE,
     DRIVETRAIN_PROFILES,
 )
+from .data import GeoRideConfigEntry
 from .helpers import GeoRideEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -403,12 +403,12 @@ def _drivetrain_overrides(profile: dict) -> dict:
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: GeoRideConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GeoRide Trips number entities from a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    trackers = data["trackers"]
+    data = entry.runtime_data
+    trackers = data.trackers
 
     # Store shared by all number entities of this config entry.
     # Written to disk immediately on each set_value → survives restarts.

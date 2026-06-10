@@ -2,7 +2,7 @@
 
 [![Version](https://img.shields.io/badge/version-2.6-blue.svg)](https://github.com/druide93/Georide-Trips)
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![HA Version](https://img.shields.io/badge/Home%20Assistant-2024.1+-green.svg)](https://www.home-assistant.io/)
+[![HA Version](https://img.shields.io/badge/Home%20Assistant-2024.6+-green.svg)](https://www.home-assistant.io/)
 
 Complete Home Assistant integration for **GeoRide** GPS trackers, providing motorcycle trip tracking, corrected odometer calculation, maintenance management (drivetrain, oil change, service), fuel range tracking and real-time security alerts.
 
@@ -311,7 +311,7 @@ The offset is configurable directly from the HA interface via `number.*_odometer
 
 ## 📋 Requirements
 
-- Home Assistant 2024.1 or higher
+- Home Assistant 2024.6 or higher
 - A GeoRide account with at least one active tracker
 - **Home Assistant Companion** app (for push notifications)
 - Python 3.11+

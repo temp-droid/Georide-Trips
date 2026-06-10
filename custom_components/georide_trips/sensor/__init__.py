@@ -2,16 +2,15 @@
 
 import logging
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from ..const import (
-    DOMAIN,
     CONF_DRIVE_TYPE,
     DEFAULT_DRIVE_TYPE,
     DRIVETRAIN_PROFILES,
 )
+from ..data import GeoRideConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -60,17 +59,17 @@ from .status import (  # noqa: E402
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: GeoRideConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GeoRide Trips sensors from a config entry."""
     _LOGGER.info("Setting up GeoRide Trips sensors from config entry")
 
-    data = hass.data[DOMAIN][entry.entry_id]
-    trackers = data["trackers"]
-    coordinators = data["coordinators"]
-    lifetime_coordinators = data["lifetime_coordinators"]
-    tracker_status_coordinators = data["tracker_status_coordinators"]
+    data = entry.runtime_data
+    trackers = data.trackers
+    coordinators = data.coordinators
+    lifetime_coordinators = data.lifetime_coordinators
+    tracker_status_coordinators = data.tracker_status_coordinators
 
     profile = DRIVETRAIN_PROFILES.get(
         entry.options.get(CONF_DRIVE_TYPE, DEFAULT_DRIVE_TYPE),

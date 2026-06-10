@@ -4,7 +4,6 @@ import asyncio
 import logging
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
@@ -26,6 +25,7 @@ from .const import (
     DEFAULT_TRACKER_SCAN_INTERVAL,
 )
 from .api import GeoRideApiError, GeoRideAuthError, GeoRideTripsAPI
+from .data import GeoRideConfigEntry, GeoRideData
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: GeoRideConfigEntry) -> bool:
     """Set up GeoRide Trips from a config entry."""
     _LOGGER.info("Setting up GeoRide Trips for %s", entry.data[CONF_EMAIL])
 
@@ -210,16 +210,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("GeoRide Socket.IO manager created (will start after platforms)")
 
     # Store all data (socket_manager already available for entities)
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = {
-        "api": api,
-        "trackers": trackers,
-        "email": entry.data[CONF_EMAIL],
-        "coordinators": coordinators,
-        "lifetime_coordinators": lifetime_coordinators,
-        "tracker_status_coordinators": tracker_status_coordinators,
-        "socket_manager": socket_manager,  # already ready for async_added_to_hass
-    }
+    entry.runtime_data = GeoRideData(
+        api=api,
+        trackers=trackers,
+        email=entry.data[CONF_EMAIL],
+        coordinators=coordinators,
+        lifetime_coordinators=lifetime_coordinators,
+        tracker_status_coordinators=tracker_status_coordinators,
+        socket_manager=socket_manager,  # already ready for async_added_to_hass
+    )
 
     # Register devices
     device_registry = dr.async_get(hass)
@@ -388,12 +387,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
                 return {"error": f"Invalid to_date format: {to_date_str}"}
 
-        # Find API instance for this entry
+        # Find API instance for any loaded entry
         api_instance = None
-        for entry_data in hass.data.get(DOMAIN, {}).values():
-            if isinstance(entry_data, dict) and "api" in entry_data:
-                api_instance = entry_data["api"]
-                break
+        for loaded_entry in hass.config_entries.async_loaded_entries(DOMAIN):
+            api_instance = loaded_entry.runtime_data.api
+            break
 
         if not api_instance:
             _LOGGER.error("GeoRide API not found for get_trips service")
@@ -443,41 +441,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def async_reload_entry(hass: HomeAssistant, entry: GeoRideConfigEntry) -> None:
     """Reload entry when options change."""
     _LOGGER.info("Options changed, reloading GeoRide Trips")
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: GeoRideConfigEntry) -> bool:
     """Unload a config entry."""
     _LOGGER.info("Unloading GeoRide Trips")
 
+    data = entry.runtime_data
+
     # Stop Socket.IO cleanly before unloading the platforms
-    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
-    socket_manager = entry_data.get("socket_manager")
-    if socket_manager:
-        await socket_manager.stop()
+    if data.socket_manager:
+        await data.socket_manager.stop()
         _LOGGER.info("GeoRide Socket.IO manager stopped")
 
     # Cancel the midnight refreshes of the lifetime coordinators
-    lifetime_coordinators = entry_data.get("lifetime_coordinators", {})
-    for lifetime_coordinator in lifetime_coordinators.values():
+    for lifetime_coordinator in data.lifetime_coordinators.values():
         lifetime_coordinator.unschedule_midnight_refresh()
 
     # Unsubscribe the recent coordinators from the StatusCoordinator (lock detection)
-    coordinators = entry_data.get("coordinators", {})
-    for coordinator in coordinators.values():
+    for coordinator in data.coordinators.values():
         coordinator.detach_status_coordinator()
 
-    if len(hass.data.get(DOMAIN, {})) <= 1:
+    # Remove shared services when the last entry is being unloaded
+    if len(hass.config_entries.async_loaded_entries(DOMAIN)) <= 1:
         hass.services.async_remove(DOMAIN, SERVICE_SET_ODOMETER)
         hass.services.async_remove(DOMAIN, SERVICE_RESET_ODOMETER)
         hass.services.async_remove(DOMAIN, SERVICE_GET_TRIPS)
 
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
-
-    return unload_ok
+    # runtime_data is cleared automatically by HA on unload.
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

@@ -17,7 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .data import GeoRideConfigEntry
 from .helpers import GeoRideEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,14 +25,14 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: GeoRideConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GeoRide Trips switch entities from a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    trackers = data["trackers"]
-    tracker_status_coordinators = data["tracker_status_coordinators"]
-    api = data["api"]
+    data = entry.runtime_data
+    trackers = data.trackers
+    tracker_status_coordinators = data.tracker_status_coordinators
+    api = data.api
 
     entities = []
     for tracker in trackers:

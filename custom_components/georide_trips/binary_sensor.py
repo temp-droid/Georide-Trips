@@ -35,11 +35,11 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    DOMAIN,
     CONF_DRIVE_TYPE,
     DEFAULT_DRIVE_TYPE,
     DRIVETRAIN_PROFILES,
 )
+from .data import GeoRideConfigEntry
 from .helpers import GeoRideEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -100,13 +100,13 @@ SOCKET_BINARY_SENSOR_DESCRIPTIONS = [
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: GeoRideConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Create the binary_sensors for each tracker."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    trackers = data["trackers"]
-    tracker_status_coordinators = data["tracker_status_coordinators"]
+    data = entry.runtime_data
+    trackers = data.trackers
+    tracker_status_coordinators = data.tracker_status_coordinators
 
     profile = DRIVETRAIN_PROFILES.get(
         entry.options.get(CONF_DRIVE_TYPE, DEFAULT_DRIVE_TYPE),
@@ -213,9 +213,8 @@ class GeoRideBinarySensor(GeoRideEntityMixin, BinarySensorEntity, RestoreEntity)
             if last_state.state not in (None, "unknown", "unavailable"):
                 self._attr_is_on = last_state.state == "on"
 
-        # Fetch the socket_manager from hass.data (available here, after full setup)
-        entry_data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
-        self._socket_manager = entry_data.get("socket_manager")
+        # Fetch the socket_manager from runtime_data (available here, after full setup)
+        self._socket_manager = self._entry.runtime_data.socket_manager
 
         if self._socket_manager:
             for event_name in self._desc["socket_events"]:
