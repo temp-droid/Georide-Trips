@@ -22,7 +22,6 @@ from homeassistant.components.datetime import DateTimeEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
@@ -32,6 +31,7 @@ from .const import (
     DEFAULT_DRIVE_TYPE,
     DRIVETRAIN_PROFILES,
 )
+from .helpers import GeoRideEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -97,10 +97,8 @@ async def async_setup_entry(
     )
 
 
-class GeoRideDateTimeEntity(DateTimeEntity, RestoreEntity):
+class GeoRideDateTimeEntity(GeoRideEntityMixin, DateTimeEntity, RestoreEntity):
     """Persistent datetime entity attached to the GeoRide device."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, entry: ConfigEntry, tracker: dict, desc: dict) -> None:
         self._entry = entry
@@ -109,6 +107,9 @@ class GeoRideDateTimeEntity(DateTimeEntity, RestoreEntity):
 
         self._tracker_id = str(tracker.get("trackerId"))
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
+        # Mixin-required public attributes
+        self.tracker_id = self._tracker_id
+        self.tracker_name = self._tracker_name
 
         self._attr_unique_id = f"{self._tracker_id}_{desc['key']}"
         self._attr_name = desc["name"]
@@ -122,16 +123,6 @@ class GeoRideDateTimeEntity(DateTimeEntity, RestoreEntity):
             self._attr_native_value: datetime = EPOCH_SENTINEL
         else:
             self._attr_native_value: datetime = datetime.now(timezone.utc)
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._tracker_id)},
-            name=self._tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     async def async_added_to_hass(self) -> None:
         """Restore the last state on restart."""

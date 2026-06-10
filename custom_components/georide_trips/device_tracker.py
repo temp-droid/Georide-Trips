@@ -19,7 +19,6 @@ from homeassistant.components.device_tracker import SourceType
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import GeoRideTripsAPI
@@ -30,6 +29,7 @@ from .const import (
     CONF_GPS_MIN_DISTANCE,
     DEFAULT_GPS_MIN_DISTANCE,
 )
+from .helpers import GeoRideEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ async def async_setup_entry(
     )
 
 
-class GeoRidePositionTracker(TrackerEntity):
+class GeoRidePositionTracker(GeoRideEntityMixin, TrackerEntity):
     """Device tracker representing the GPS position of a GeoRide motorcycle.
 
     Updates via the Socket.IO "position" event — real-time, no polling.
@@ -79,8 +79,6 @@ class GeoRidePositionTracker(TrackerEntity):
     3. Distance < min_threshold → micro-drift ignored, HA state NOT written
     4. Otherwise → async_write_ha_state() → recorder entry
     """
-
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -97,6 +95,9 @@ class GeoRidePositionTracker(TrackerEntity):
 
         self._tracker_id = str(tracker.get("trackerId"))
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
+        # Mixin-required public attributes
+        self.tracker_id = self._tracker_id
+        self.tracker_name = self._tracker_name
 
         self._attr_unique_id = f"{self._tracker_id}_position"
         self._attr_name = "Position"
@@ -114,16 +115,6 @@ class GeoRidePositionTracker(TrackerEntity):
 
         # Socket.IO unregistration
         self._unsub_socket: list = []
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._tracker_id)},
-            name=self._tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     # ── TrackerEntity properties ─────────────────────────────────────────────
 

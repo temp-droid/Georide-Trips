@@ -51,7 +51,6 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfLength
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
 
@@ -61,6 +60,7 @@ from .const import (
     DEFAULT_DRIVE_TYPE,
     DRIVETRAIN_PROFILES,
 )
+from .helpers import GeoRideEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -436,15 +436,13 @@ async def async_setup_entry(
     )
 
 
-class GeoRideNumberEntity(NumberEntity):
+class GeoRideNumberEntity(GeoRideEntityMixin, NumberEntity):
     """Persistent number entity attached to the GeoRide device.
 
     Uses homeassistant.helpers.storage.Store instead of RestoreEntity:
     each change is written to disk immediately (async_delay=0),
     which guarantees the values survive even on an abrupt restart.
     """
-
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -461,6 +459,9 @@ class GeoRideNumberEntity(NumberEntity):
 
         self._tracker_id = str(tracker.get("trackerId"))
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
+        # Mixin-required public attributes
+        self.tracker_id = self._tracker_id
+        self.tracker_name = self._tracker_name
 
         self._attr_unique_id = f"{self._tracker_id}_{desc['key']}"
         self._attr_name = desc["name"]
@@ -484,16 +485,6 @@ class GeoRideNumberEntity(NumberEntity):
             self._attr_native_value = float(raw) if raw is not None else default
         except (ValueError, TypeError):
             self._attr_native_value = default
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._tracker_id)},
-            name=self._tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     async def async_set_native_value(self, value: float) -> None:
         self._attr_native_value = value

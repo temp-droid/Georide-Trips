@@ -11,7 +11,6 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfLength, UnitOfElectricPotential, EntityCategory
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.util import dt as dt_util
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
@@ -30,6 +29,7 @@ from .const import (
     DEFAULT_DRIVE_TYPE,
     DRIVETRAIN_PROFILES,
 )
+from .helpers import GeoRideEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -638,7 +638,7 @@ class GeoRideMidnightSnapshotManager:
 # ════════════════════════════════════════════════════════════════════════════
 
 
-class _GeoRideKmPeriodBase(SensorEntity, RestoreEntity):
+class _GeoRideKmPeriodBase(GeoRideEntityMixin, SensorEntity, RestoreEntity):
     """Base class for the periodic km sensors.
 
     Computation: max(odometer - snapshot_debut, 0)
@@ -647,8 +647,6 @@ class _GeoRideKmPeriodBase(SensorEntity, RestoreEntity):
       - sensor.<moto>_odometer  (via a direct reference to GeoRideRealOdometerSensor)
       - number.<moto>_km_debut_<periode>  (start-of-period snapshot)
     """
-
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -677,16 +675,6 @@ class _GeoRideKmPeriodBase(SensorEntity, RestoreEntity):
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = None
         self._attr_native_value: float = 0.0
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -735,17 +723,6 @@ class _GeoRideKmPeriodBase(SensorEntity, RestoreEntity):
 
         self._recalculate()
         self.async_write_ha_state()
-
-    def _get_float(self, entity_id: str | None, default: float = 0.0) -> float:
-        if entity_id is None:
-            return default
-        state = self._hass.states.get(entity_id)
-        if state and state.state not in (None, "unknown", "unavailable"):
-            try:
-                return float(state.state)
-            except (ValueError, TypeError):
-                pass
-        return default
 
     def _is_snapshot_ready(self) -> bool:
         """Return True if the snapshot entity is available and non-zero."""
@@ -859,10 +836,8 @@ class GeoRideKmMensuelsSensor(_GeoRideKmPeriodBase):
 # ════════════════════════════════════════════════════════════════════════════
 
 
-class GeoRideLastTripSensor(CoordinatorEntity, SensorEntity):
+class GeoRideLastTripSensor(GeoRideEntityMixin, CoordinatorEntity, SensorEntity):
     """Sensor for last trip (simple)."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry, tracker):
         super().__init__(coordinator)
@@ -875,16 +850,6 @@ class GeoRideLastTripSensor(CoordinatorEntity, SensorEntity):
         self._attr_icon = "mdi:map-marker-path"
 
     @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
-
-    @property
     def native_value(self):
         trips = self.coordinator.data
         if not trips:
@@ -892,10 +857,8 @@ class GeoRideLastTripSensor(CoordinatorEntity, SensorEntity):
         return trips[0].get("startTime")
 
 
-class GeoRideLastTripDetailsSensor(CoordinatorEntity, SensorEntity):
+class GeoRideLastTripDetailsSensor(GeoRideEntityMixin, CoordinatorEntity, SensorEntity):
     """Sensor for last trip with detailed info."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry, tracker):
         super().__init__(coordinator)
@@ -906,16 +869,6 @@ class GeoRideLastTripDetailsSensor(CoordinatorEntity, SensorEntity):
         self._attr_name = "Last trip details"
         self._attr_unique_id = f"{self.tracker_id}_last_trip_details"
         self._attr_icon = "mdi:map-marker-star"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     @property
     def native_value(self):
@@ -1000,10 +953,8 @@ class GeoRideLastTripDetailsSensor(CoordinatorEntity, SensorEntity):
         }
 
 
-class GeoRideTotalDistanceSensor(CoordinatorEntity, SensorEntity):
+class GeoRideTotalDistanceSensor(GeoRideEntityMixin, CoordinatorEntity, SensorEntity):
     """Sensor for total distance over period."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry, tracker):
         super().__init__(coordinator)
@@ -1018,16 +969,6 @@ class GeoRideTotalDistanceSensor(CoordinatorEntity, SensorEntity):
         self._attr_device_class = SensorDeviceClass.DISTANCE
 
     @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
-
-    @property
     def native_value(self):
         trips = self.coordinator.data
         if not trips:
@@ -1036,10 +977,8 @@ class GeoRideTotalDistanceSensor(CoordinatorEntity, SensorEntity):
         return round(total_m / METERS_TO_KM, 2)
 
 
-class GeoRideTripCountSensor(CoordinatorEntity, SensorEntity):
+class GeoRideTripCountSensor(GeoRideEntityMixin, CoordinatorEntity, SensorEntity):
     """Sensor for trip count over period."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry, tracker):
         super().__init__(coordinator)
@@ -1052,16 +991,6 @@ class GeoRideTripCountSensor(CoordinatorEntity, SensorEntity):
         self._attr_icon = "mdi:counter"
 
     @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
-
-    @property
     def native_value(self):
         trips = self.coordinator.data
         return len(trips) if trips else 0
@@ -1072,10 +1001,10 @@ class GeoRideTripCountSensor(CoordinatorEntity, SensorEntity):
 # ════════════════════════════════════════════════════════════════════════════
 
 
-class GeoRideLifetimeOdometerSensor(CoordinatorEntity, SensorEntity):
+class GeoRideLifetimeOdometerSensor(
+    GeoRideEntityMixin, CoordinatorEntity, SensorEntity
+):
     """Sensor for lifetime odometer."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry, tracker):
         super().__init__(coordinator)
@@ -1089,16 +1018,6 @@ class GeoRideLifetimeOdometerSensor(CoordinatorEntity, SensorEntity):
         self._attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
         self._attr_device_class = SensorDeviceClass.DISTANCE
         self._attr_state_class = SensorStateClass.TOTAL_INCREASING
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     @property
     def native_value(self):
@@ -1167,7 +1086,7 @@ class GeoRideLifetimeOdometerSensor(CoordinatorEntity, SensorEntity):
         }
 
 
-class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
+class GeoRideRealOdometerSensor(GeoRideEntityMixin, CoordinatorEntity, SensorEntity):
     """Sensor for real odometer = lifetime base + intraday delta + offset.
 
     Computation strategy:
@@ -1187,8 +1106,6 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
     The sensor subscribes to both coordinators: any update from one
     or the other triggers a recompute.
     """
-
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -1379,16 +1296,6 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
         return km if km > 0 else None
 
     @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
-
-    @property
     def native_value(self):
         # As long as the offset has not been restored, do not publish a value
         # to avoid a spike in the history.
@@ -1481,7 +1388,7 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
 # ════════════════════════════════════════════════════════════════════════════
 
 
-class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
+class GeoRideAutonomySensor(GeoRideEntityMixin, SensorEntity, RestoreEntity):
     """Remaining range sensor, updated on every odometer change.
 
     Computation:
@@ -1500,8 +1407,6 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
       - number.<moto>_autonomie_moyenne_calculee
       - number.<moto>_nb_pleins_enregistres
     """
-
-    _attr_has_entity_name = True
 
     def __init__(
         self, entry, tracker, hass, odometer_sensor: "GeoRideRealOdometerSensor"
@@ -1526,16 +1431,6 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
         self._attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_native_value: float = 0.0
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -1603,17 +1498,6 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
         self._recalculate()
         self.async_write_ha_state()
 
-    def _get_float(self, entity_id: str | None, default: float = 0.0) -> float:
-        if entity_id is None:
-            return default
-        state = self._hass.states.get(entity_id)
-        if state and state.state not in (None, "unknown", "unavailable"):
-            try:
-                return float(state.state)
-            except (ValueError, TypeError):
-                pass
-        return default
-
     def _recalculate(self) -> None:
         odometer_km = self._odometer_sensor.native_value or 0.0
         fuel_km_at_last_refuel = self._get_float(self._entity_km_dernier_plein)
@@ -1661,7 +1545,7 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
 # ════════════════════════════════════════════════════════════════════════════
 
 
-class _GeoRideEntretienKmBase(SensorEntity, RestoreEntity):
+class _GeoRideEntretienKmBase(GeoRideEntityMixin, SensorEntity, RestoreEntity):
     """Base class for the remaining-km maintenance sensors.
 
     Common computation:
@@ -1673,8 +1557,6 @@ class _GeoRideEntretienKmBase(SensorEntity, RestoreEntity):
       - number.<moto>_<intervalle_key>  (resolved via the entity registry)
       - number.<moto>_<km_dernier_key>  (resolved via the entity registry)
     """
-
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -1709,16 +1591,6 @@ class _GeoRideEntretienKmBase(SensorEntity, RestoreEntity):
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = None
         self._attr_native_value: float = 0.0
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -1771,17 +1643,6 @@ class _GeoRideEntretienKmBase(SensorEntity, RestoreEntity):
     def _handle_state_change(self, event) -> None:
         self._recalculate()
         self.async_write_ha_state()
-
-    def _get_float(self, entity_id: str | None, default: float = 0.0) -> float:
-        if entity_id is None:
-            return default
-        state = self._hass.states.get(entity_id)
-        if state and state.state not in (None, "unknown", "unavailable"):
-            try:
-                return float(state.state)
-            except (ValueError, TypeError):
-                pass
-        return default
 
     def _recalculate(self) -> None:
         odometer_km = self._odometer_sensor.native_value or 0.0
@@ -1869,7 +1730,9 @@ class GeoRideKmRestantsRevisionSensor(_GeoRideEntretienKmBase):
         )
 
 
-class GeoRideJoursRestantsRevisionSensor(SensorEntity, RestoreEntity):
+class GeoRideJoursRestantsRevisionSensor(
+    GeoRideEntityMixin, SensorEntity, RestoreEntity
+):
     """Sensor for days remaining before service (based on last maintenance date + interval in days).
 
     Computation:
@@ -1880,8 +1743,6 @@ class GeoRideJoursRestantsRevisionSensor(SensorEntity, RestoreEntity):
       - datetime.<moto>_entretien_revision_date_derniere_revision
       - number.<moto>_entretien_revision_intervalle_jours
     """
-
-    _attr_has_entity_name = True
 
     # Keys/label of the maintenance slot this days-sensor belongs to.
     # Overridden by subclasses (e.g. drivetrain) to point at another slot.
@@ -1909,16 +1770,6 @@ class GeoRideJoursRestantsRevisionSensor(SensorEntity, RestoreEntity):
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = None
         self._attr_native_value: float = 0.0
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -1984,17 +1835,6 @@ class GeoRideJoursRestantsRevisionSensor(SensorEntity, RestoreEntity):
     def _handle_midnight(self, now) -> None:
         self._recalculate()
         self.async_write_ha_state()
-
-    def _get_float(self, entity_id: str | None, default: float = 0.0) -> float:
-        if entity_id is None:
-            return default
-        state = self._hass.states.get(entity_id)
-        if state and state.state not in (None, "unknown", "unavailable"):
-            try:
-                return float(state.state)
-            except (ValueError, TypeError):
-                pass
-        return default
 
     def _recalculate(self) -> None:
         intervalle_j = self._get_float(self._entity_intervalle_j, 0.0)
@@ -2086,10 +1926,8 @@ class GeoRideJoursRestantsDrivetrainSensor(GeoRideJoursRestantsRevisionSensor):
 # ════════════════════════════════════════════════════════════════════════════
 
 
-class GeoRideTrackerStatusSensor(CoordinatorEntity, SensorEntity):
+class GeoRideTrackerStatusSensor(GeoRideEntityMixin, CoordinatorEntity, SensorEntity):
     """Sensor exposing the tracker's network status (online / offline)."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, coordinator: GeoRideTrackerStatusCoordinator, entry, tracker):
         super().__init__(coordinator)
@@ -2101,16 +1939,6 @@ class GeoRideTrackerStatusSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{self.tracker_id}_tracker_status"
         self._attr_icon = "mdi:signal"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     @property
     def native_value(self) -> str | None:
@@ -2126,10 +1954,8 @@ class GeoRideTrackerStatusSensor(CoordinatorEntity, SensorEntity):
         return "mdi:signal-off"
 
 
-class GeoRideExternalBatterySensor(CoordinatorEntity, SensorEntity):
+class GeoRideExternalBatterySensor(GeoRideEntityMixin, CoordinatorEntity, SensorEntity):
     """Sensor for the external battery voltage (GeoRide 3 only)."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, coordinator: GeoRideTrackerStatusCoordinator, entry, tracker):
         super().__init__(coordinator)
@@ -2145,16 +1971,6 @@ class GeoRideExternalBatterySensor(CoordinatorEntity, SensorEntity):
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self._attr_icon = "mdi:battery-charging"
         self._attr_suggested_display_precision = 2
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     @property
     def native_value(self) -> float | None:
@@ -2178,10 +1994,8 @@ class GeoRideExternalBatterySensor(CoordinatorEntity, SensorEntity):
         return bool(data and data.get("externalBatteryVoltage") is not None)
 
 
-class GeoRideInternalBatterySensor(CoordinatorEntity, SensorEntity):
+class GeoRideInternalBatterySensor(GeoRideEntityMixin, CoordinatorEntity, SensorEntity):
     """Sensor for the internal battery voltage (GeoRide 3 only)."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, coordinator: GeoRideTrackerStatusCoordinator, entry, tracker):
         super().__init__(coordinator)
@@ -2197,16 +2011,6 @@ class GeoRideInternalBatterySensor(CoordinatorEntity, SensorEntity):
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self._attr_icon = "mdi:battery"
         self._attr_suggested_display_precision = 2
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     @property
     def native_value(self) -> float | None:
@@ -2235,10 +2039,8 @@ class GeoRideInternalBatterySensor(CoordinatorEntity, SensorEntity):
 # ════════════════════════════════════════════════════════════════════════════
 
 
-class GeoRideLastAlarmSensor(RestoreEntity, SensorEntity):
+class GeoRideLastAlarmSensor(GeoRideEntityMixin, RestoreEntity, SensorEntity):
     """Sensor exposing the type of the last alarm received via Socket.IO."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, entry, tracker):
         self.tracker_id = str(tracker.get("trackerId"))
@@ -2253,16 +2055,6 @@ class GeoRideLastAlarmSensor(RestoreEntity, SensorEntity):
         self._alarm_timestamp: str | None = None
         self._device_name: str | None = None
         self._unregister_alarm: callable | None = None
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     @property
     def native_value(self) -> str | None:

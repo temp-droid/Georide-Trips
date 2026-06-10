@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -15,6 +14,7 @@ from .const import (
     DEFAULT_DRIVE_TYPE,
     DRIVETRAIN_PROFILES,
 )
+from .helpers import GeoRideEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -101,10 +101,8 @@ async def async_setup_entry(
     _LOGGER.info("Added %d buttons for %d trackers", len(buttons), len(trackers))
 
 
-class GeoRideRefreshTripsButton(ButtonEntity):
+class GeoRideRefreshTripsButton(GeoRideEntityMixin, ButtonEntity):
     """Button to manually refresh recent trips."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, entry, tracker, coordinator):
         """Initialize the button."""
@@ -118,27 +116,14 @@ class GeoRideRefreshTripsButton(ButtonEntity):
         self._attr_unique_id = f"{self.tracker_id}_refresh_trips"
         self._attr_icon = "mdi:refresh"
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
-
     async def async_press(self) -> None:
         """Handle the button press - refresh recent trips."""
         _LOGGER.info("Manual refresh triggered for trips: %s", self.tracker_name)
         await self._coordinator.async_request_refresh()
 
 
-class GeoRideRefreshOdometerButton(ButtonEntity):
+class GeoRideRefreshOdometerButton(GeoRideEntityMixin, ButtonEntity):
     """Button to manually refresh lifetime odometer."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, entry, tracker, coordinator):
         """Initialize the button."""
@@ -152,27 +137,14 @@ class GeoRideRefreshOdometerButton(ButtonEntity):
         self._attr_unique_id = f"{self.tracker_id}_refresh_odometer"
         self._attr_icon = "mdi:counter"
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
-
     async def async_press(self) -> None:
         """Handle the button press - refresh lifetime odometer."""
         _LOGGER.info("Manual refresh triggered for odometer: %s", self.tracker_name)
         await self._coordinator.async_request_refresh()
 
 
-class GeoRideRecordMaintenanceButton(ButtonEntity):
+class GeoRideRecordMaintenanceButton(GeoRideEntityMixin, ButtonEntity):
     """Button to record a maintenance event (drivetrain, oil change, service)."""
-
-    _attr_has_entity_name = True
 
     LABEL = {
         "drivetrain": "Record drivetrain service",
@@ -212,17 +184,6 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
         self._attr_name = name or self.LABEL.get(maintenance_type, maintenance_type)
         self._attr_unique_id = f"{self.tracker_id}_record_{maintenance_type}"
         self._attr_icon = icon
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     async def async_added_to_hass(self) -> None:
         """Resolve the entity_ids via the registry."""
@@ -308,7 +269,7 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
         )
 
 
-class GeoRideConfirmerPleinButton(ButtonEntity):
+class GeoRideConfirmerPleinButton(GeoRideEntityMixin, ButtonEntity):
     """Button to confirm a refuel — precise odometer computation in 2 steps.
 
     Step 1 (async_press) — immediate:
@@ -325,8 +286,6 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         • Update fuel_km_at_last_refuel + fuel_recorded_refuel_count
         • Reset refuel_pending_at = None (sentinel epoch 1970)
     """
-
-    _attr_has_entity_name = True
 
     HIST_SLOTS = 3
 
@@ -354,16 +313,6 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
 
         # Management of the stop_confirmed subscription
         self._unregister_stop_cb: callable | None = None
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -748,7 +697,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
             return 0.0
 
 
-class GeoRideAppliquerAutonomieButton(ButtonEntity):
+class GeoRideAppliquerAutonomieButton(GeoRideEntityMixin, ButtonEntity):
     """Button to apply the computed average range as the reference range.
 
     `button.<moto>_appliquer_autonomie_calculee`
@@ -765,8 +714,6 @@ class GeoRideAppliquerAutonomieButton(ButtonEntity):
     If not met, logs a warning and does nothing.
     """
 
-    _attr_has_entity_name = True
-
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tracker: dict) -> None:
         self._hass = hass
         self._entry = entry
@@ -779,16 +726,6 @@ class GeoRideAppliquerAutonomieButton(ButtonEntity):
         self._attr_name = "Apply calculated range"
         self._attr_unique_id = f"{self.tracker_id}_apply_calculated_range"
         self._attr_icon = "mdi:check-circle-outline"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     def _get_float(self, entity_id: str, default: float = 0.0) -> float:
         state = self._hass.states.get(entity_id)

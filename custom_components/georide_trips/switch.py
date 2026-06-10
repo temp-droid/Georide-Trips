@@ -14,11 +14,11 @@ import logging
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .helpers import GeoRideEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,14 +49,12 @@ async def async_setup_entry(
     _LOGGER.info("Added %d switches for %d trackers", len(entities), len(trackers))
 
 
-class GeoRideEcoModeSwitch(CoordinatorEntity, SwitchEntity):
+class GeoRideEcoModeSwitch(GeoRideEntityMixin, CoordinatorEntity, SwitchEntity):
     """Switch to enable/disable the GeoRide tracker's eco mode.
 
     The state is read from the GeoRideTrackerStatusCoordinator (polling /user/trackers).
     The change is sent via PUT /tracker/{id}/eco.
     """
-
-    _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry: ConfigEntry, tracker: dict, api) -> None:
         super().__init__(coordinator)
@@ -65,20 +63,13 @@ class GeoRideEcoModeSwitch(CoordinatorEntity, SwitchEntity):
         self._api = api
         self._tracker_id = str(tracker.get("trackerId"))
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
+        # Mixin-required public attributes
+        self.tracker_id = self._tracker_id
+        self.tracker_name = self._tracker_name
         self._attr_unique_id = f"{self._tracker_id}_eco_mode"
         self._attr_name = "Eco mode"
         self._attr_icon = "mdi:leaf"
         self._attr_entity_category = None
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._tracker_id)},
-            name=self._tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     @property
     def is_on(self) -> bool | None:
@@ -104,15 +95,13 @@ class GeoRideEcoModeSwitch(CoordinatorEntity, SwitchEntity):
             await self.coordinator.async_request_refresh()
 
 
-class GeoRideLockSwitch(CoordinatorEntity, SwitchEntity):
+class GeoRideLockSwitch(GeoRideEntityMixin, CoordinatorEntity, SwitchEntity):
     """Switch to lock/unlock the GeoRide tracker.
 
     The state is read from the GeoRideTrackerStatusCoordinator (`isLocked` field).
     The toggle is sent via POST /tracker/{id}/toggleLock.
     On = locked, Off = unlocked.
     """
-
-    _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry: ConfigEntry, tracker: dict, api) -> None:
         super().__init__(coordinator)
@@ -121,20 +110,13 @@ class GeoRideLockSwitch(CoordinatorEntity, SwitchEntity):
         self._api = api
         self._tracker_id = str(tracker.get("trackerId"))
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
+        # Mixin-required public attributes
+        self.tracker_id = self._tracker_id
+        self.tracker_name = self._tracker_name
         self._attr_unique_id = f"{self._tracker_id}_lock"
         self._attr_name = "Lock"
         self._attr_icon = "mdi:lock"
         self._attr_entity_category = None
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._tracker_id)},
-            name=self._tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     @property
     def is_on(self) -> bool | None:

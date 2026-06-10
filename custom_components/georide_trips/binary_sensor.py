@@ -29,7 +29,6 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -41,6 +40,7 @@ from .const import (
     DEFAULT_DRIVE_TYPE,
     DRIVETRAIN_PROFILES,
 )
+from .helpers import GeoRideEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ async def async_setup_entry(
 # ════════════════════════════════════════════════════════════════════════════
 
 
-class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
+class GeoRideBinarySensor(GeoRideEntityMixin, BinarySensorEntity, RestoreEntity):
     """GeoRide binary sensor fed by Socket.IO.
 
     Accepts an optional coordinator_fallback (GeoRideTrackerStatusCoordinator):
@@ -168,8 +168,6 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
     Supports value inversion via desc["invert"] for cases like LOCK
     where the HA convention is inverted relative to the GeoRide payload.
     """
-
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -186,6 +184,9 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
 
         self._tracker_id = str(tracker.get("trackerId"))
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
+        # Mixin-required public attributes
+        self.tracker_id = self._tracker_id
+        self.tracker_name = self._tracker_name
 
         self._attr_unique_id = f"{self._tracker_id}_{desc['key']}"
         self._attr_name = desc["name"]
@@ -203,16 +204,6 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
     @property
     def icon(self) -> str:
         return self._desc["icon_on"] if self._attr_is_on else self._desc["icon_off"]
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._tracker_id)},
-            name=self._tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     async def async_added_to_hass(self) -> None:
         """Restore the state and subscribe to Socket.IO events."""
@@ -337,10 +328,10 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
 # ════════════════════════════════════════════════════════════════════════════
 
 
-class GeoRideOnlineBinarySensor(CoordinatorEntity, BinarySensorEntity):
+class GeoRideOnlineBinarySensor(
+    GeoRideEntityMixin, CoordinatorEntity, BinarySensorEntity
+):
     """Binary sensor: tracker online (status == 'online'), updated every 5 min."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry: ConfigEntry, tracker: dict) -> None:
         super().__init__(coordinator)
@@ -348,21 +339,14 @@ class GeoRideOnlineBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._tracker = tracker
         self._tracker_id = str(tracker.get("trackerId"))
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
+        # Mixin-required public attributes
+        self.tracker_id = self._tracker_id
+        self.tracker_name = self._tracker_name
 
         self._attr_unique_id = f"{self._tracker_id}_online"
         self._attr_name = "Online"
         self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._tracker_id)},
-            name=self._tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
 
     @property
     def is_on(self) -> bool:
@@ -381,7 +365,7 @@ class GeoRideOnlineBinarySensor(CoordinatorEntity, BinarySensorEntity):
 # ════════════════════════════════════════════════════════════════════════════
 
 
-class _GeoRideAlerteBinarySensorBase(BinarySensorEntity):
+class _GeoRideAlerteBinarySensorBase(GeoRideEntityMixin, BinarySensorEntity):
     """Base for the maintenance/fuel alert binary sensors.
 
     Computes its state in real time from the integration's sensors/numbers.
@@ -389,8 +373,6 @@ class _GeoRideAlerteBinarySensorBase(BinarySensorEntity):
     (after a maintenance/refuel confirmation). No anti-duplicate logic needed:
     the blueprint uses a from='off' to='on' trigger to fire the notification.
     """
-
-    _attr_has_entity_name = True
 
     def __init__(self, entry: ConfigEntry, tracker: dict, hass: HomeAssistant) -> None:
         self._entry = entry
@@ -401,27 +383,6 @@ class _GeoRideAlerteBinarySensorBase(BinarySensorEntity):
         self.tracker_id = str(tracker.get("trackerId"))
         self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
         self._slug = self.tracker_name.lower().replace(" ", "_")
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.tracker_id)},
-            name=self.tracker_name,
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
-
-    def _get_float(self, entity_id: str | None, default: float = 0.0) -> float:
-        if entity_id is None:
-            return default
-        state = self._hass.states.get(entity_id)
-        if state and state.state not in (None, "unknown", "unavailable"):
-            try:
-                return float(state.state)
-            except (ValueError, TypeError):
-                pass
-        return default
 
     def _watched_entities(self) -> list[str]:
         """Return the list of entities to watch for recomputation."""
@@ -462,8 +423,6 @@ class GeoRidePleinRequisBinarySensor(_GeoRideAlerteBinarySensorBase):
     `binary_sensor.<moto>_plein_requis`
     Replaces switch.<moto>_faire_le_plein.
     """
-
-    _attr_has_entity_name = True
 
     def __init__(self, entry, tracker, hass) -> None:
         super().__init__(entry, tracker, hass)
@@ -508,8 +467,6 @@ class GeoRideDrivetrainRequiseBinarySensor(_GeoRideAlerteBinarySensorBase):
       remaining_km ≤ alert_threshold OR (day_interval > 0 AND remaining_days ≤ 30).
     When day_interval == 0 (chain/belt) only the km criterion applies.
     """
-
-    _attr_has_entity_name = True
 
     def __init__(self, entry, tracker, hass, label="Drivetrain") -> None:
         super().__init__(entry, tracker, hass)
@@ -569,8 +526,6 @@ class GeoRideVidangeRequiseBinarySensor(_GeoRideAlerteBinarySensorBase):
     Replaces switch.<moto>_vidange_a_faire.
     """
 
-    _attr_has_entity_name = True
-
     def __init__(self, entry, tracker, hass) -> None:
         super().__init__(entry, tracker, hass)
         self._entity_km_restants: str | None = None
@@ -612,8 +567,6 @@ class GeoRideRevisionRequiseBinarySensor(_GeoRideAlerteBinarySensorBase):
     Replaces switch.<moto>_revision_a_faire.
     Dual criterion: km_restants ≤ seuil_km OR jours_restants ≤ 30.
     """
-
-    _attr_has_entity_name = True
 
     def __init__(self, entry, tracker, hass) -> None:
         super().__init__(entry, tracker, hass)
