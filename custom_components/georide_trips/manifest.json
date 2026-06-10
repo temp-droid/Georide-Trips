@@ -4,9 +4,9 @@
   "codeowners": [],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/druide93/Georide-Trips",
+  "documentation": "https://github.com/temp-droid/Georide-Trips",
   "iot_class": "cloud_push",
-  "issue_tracker": "https://github.com/druide93/Georide-Trips",
+  "issue_tracker": "https://github.com/temp-droid/Georide-Trips",
   "requirements": ["aiohttp>=3.8.0", "python-socketio[asyncio_client]>=5.0"],
   "version": "2.6.0"
 }

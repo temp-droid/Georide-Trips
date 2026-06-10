@@ -1,8 +1,10 @@
 # 🏍️ GeoRide Trips — Home Assistant Integration
 
-[![Version](https://img.shields.io/badge/version-2.6-blue.svg)](https://github.com/druide93/Georide-Trips)
+[![Version](https://img.shields.io/badge/version-2.6-blue.svg)](https://github.com/temp-droid/Georide-Trips)
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-2024.6+-green.svg)](https://www.home-assistant.io/)
+
+> **🍴 This is a personal fork.** The original **GeoRide Trips** integration was created by **[druide93](https://github.com/druide93/Georide-Trips)** — all the hard work of reverse-engineering the GeoRide API and building the integration is his. This fork only adds incremental changes on top (English translation, adaptive drivetrain maintenance, internal refactors, reauth flow). It is a **personal copy, not actively maintained**, provided as-is and **not accepting contributions** — for the canonical, maintained project, please use [druide93/Georide-Trips](https://github.com/druide93/Georide-Trips).
 
 Complete Home Assistant integration for **GeoRide** GPS trackers, providing motorcycle trip tracking, corrected odometer calculation, maintenance management (drivetrain, oil change, service), fuel range tracking and real-time security alerts.
 
@@ -66,7 +68,7 @@ A native Python `GeoRideMidnightSnapshotManager` automatically updates the snaps
 ### Via HACS (recommended)
 
 1. In HACS, go to **Integrations** → ⋮ menu → **Custom repositories**
-2. Add `https://github.com/druide93/Georide-Trips` with the **Integration** category
+2. Add `https://github.com/temp-droid/Georide-Trips` with the **Integration** category
 3. Search for **GeoRide Trips** and install
 4. Restart Home Assistant
 
@@ -373,15 +375,18 @@ Local brand images live in `custom_components/georide_trips/brand/`. Home Assist
 
 ---
 
+## 🙏 Credits
+
+The original **GeoRide Trips** integration — including the GeoRide API reverse-engineering and the entire integration design — was written by **[druide93](https://github.com/druide93/Georide-Trips)**. Full credit for the project goes to him.
+
+## 📦 Project status
+
+This is **my personal copy** of druide93's integration, with adaptations for my own setup (a shaft-drive Honda NT700V). I am **not planning to maintain it actively** and it is provided **as-is, with no support, no warranty, and no contributions accepted** (issues and pull requests will not be monitored). If you want the maintained, canonical project, use **[druide93/Georide-Trips](https://github.com/druide93/Georide-Trips)**.
+
 ## 📄 License
 
 MIT License — See [LICENSE](LICENSE) for details.
 
 ---
-
-## 🤝 Contributing
-
-Issues and pull requests are welcome on [GitHub](https://github.com/druide93/Georide-Trips).
-
 
 > **Note**: This project is not affiliated with GeoRide. GeoRide is a registered trademark of GeoRide SAS.
