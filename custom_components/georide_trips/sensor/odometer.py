@@ -160,6 +160,14 @@ class GeoRideRealOdometerSensor(GeoRideEntityMixin, CoordinatorEntity, SensorEnt
         self._offset_entity_id: str | None = None
         # Flag to avoid publishing a spurious value before the offset is restored
         self._offset_ready = False
+        # Intraday freshness anchors: GeoRide's server-side `odometer` field lags
+        # its own trips API (it can stay frozen for a full day while trips already
+        # reflect the rides). To keep the odometer/range fresh we add the trip
+        # distance accrued since GeoRide's field last advanced, then re-anchor
+        # (resetting the supplement) whenever that field catches up — so no drift,
+        # no double-count.
+        self._georide_anchor: float | None = None
+        self._tracker_anchor: float | None = None
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -317,6 +325,56 @@ class GeoRideRealOdometerSensor(GeoRideEntityMixin, CoordinatorEntity, SensorEnt
             return None
         return km if km > 0 else None
 
+    def _today_trip_distance_km(self) -> float:
+        """Distance (km) of trips that started today (local), deduplicated.
+
+        Used to seed the intraday anchor: GeoRide's odometer field typically
+        resyncs ~overnight, so on the first read we assume it reflects mileage
+        up to the start of today and treat today's trips as not-yet-ingested.
+        """
+        from datetime import datetime
+
+        from homeassistant.util import dt as dt_util
+
+        start = dt_util.start_of_local_day()
+        lifetime = self.coordinator.data or {}
+        trips = list(self._recent_coordinator.data or []) + list(
+            lifetime.get("trips", [])
+        )
+        seen: set = set()
+        total_m = 0
+        for t in trips:
+            tid = t.get("id") or t.get("startTime")
+            if tid in seen:
+                continue
+            seen.add(tid)
+            st = t.get("startTime") or ""
+            if not st:
+                continue
+            try:
+                started = datetime.fromisoformat(st.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if started >= start:
+                total_m += t.get("distance", 0)
+        return total_m / METERS_TO_KM
+
+    def _intraday_supplement_km(self, tracker_km: float, georide_km: float) -> float:
+        """Trip distance accrued since GeoRide's odometer field last advanced.
+
+        Re-anchors (supplement → 0) whenever GeoRide's authoritative value
+        changes, so the field stays the source of truth and no drift/double
+        count accumulates. On the very first read the tracker anchor is seeded
+        before today's rides so they are counted immediately.
+        """
+        if georide_km != self._georide_anchor:
+            self._georide_anchor = georide_km
+            if self._tracker_anchor is None:
+                self._tracker_anchor = tracker_km - self._today_trip_distance_km()
+            else:
+                self._tracker_anchor = tracker_km
+        return max(0.0, tracker_km - self._tracker_anchor)
+
     @property
     def native_value(self):
         # As long as the offset has not been restored, do not publish a value
@@ -332,10 +390,19 @@ class GeoRideRealOdometerSensor(GeoRideEntityMixin, CoordinatorEntity, SensorEnt
         offset_km = self._get_offset_km()
 
         # Primary source: GeoRide's own odometer field — authoritative, matches
-        # the app, self-correcting, no manual offset needed.
+        # the app, self-correcting, no manual offset needed. It can lag its own
+        # trips API by up to a day, so we add the intraday trip distance it has
+        # not ingested yet (auto-resynced when the field advances).
         georide_km = self._get_georide_odometer_km()
         if georide_km is not None:
-            return round(georide_km + offset_km, 2)
+            if self.coordinator.data:
+                base_km, delta_km, _ = self._compute_tracker_km_guarded()
+                supplement = self._intraday_supplement_km(
+                    base_km + delta_km, georide_km
+                )
+            else:
+                supplement = 0.0
+            return round(georide_km + supplement + offset_km, 2)
 
         # Fallback: lifetime trip sum + intraday delta (legacy) for trackers that
         # don't expose the odometer field. Needs the lifetime base loaded first.
@@ -402,4 +469,9 @@ class GeoRideRealOdometerSensor(GeoRideEntityMixin, CoordinatorEntity, SensorEnt
             "georide_odometer_km": round(georide_km, 2)
             if georide_km is not None
             else None,
+            "intraday_supplement_km": round(
+                max(0.0, (base_km + delta_km) - self._tracker_anchor), 2
+            )
+            if (georide_km is not None and self._tracker_anchor is not None)
+            else 0.0,
         }
